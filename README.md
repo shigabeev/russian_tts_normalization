@@ -12,13 +12,13 @@ complex_test_text = """У меня есть $1234 и 5678 рублей. Кром
 В моем кошельке было 876 UAH и 543.21 RUB, а также я нашел 20 центов."""
 ​
 normalized_text = normalize_russian(complex_test_text)
-normalized_text
+print(normalized_text)
 ```
 
-​Yields:
+​Prints:
 
 ```
-'У меня есть одна тысяча двести тридцать четыре доллара и пять тысяч шестьсот семьдесят восемь рублей. Кроме того, я должен девяносто евро пятьдесят евроцентов и взял в долг четыре тысячи триста двадцать один фунт.\nВ моем кошельке было восемьсот семьдесят шесть гривен и пятьсот сорок три рубля двадцать один копейка, а также я нашел 20 центов.'
+У меня есть одна тысяча двести тридцать четыре доллара и пять тысяч шестьсот семьдесят восемь рублей. Кроме того, я должен девяносто евро пятьдесят евроцентов и взял в долг четыре тысячи триста двадцать один фунт.\nВ моем кошельке было восемьсот семьдесят шесть гривен и пятьсот сорок три рубля двадцать один копейка, а также я нашел 20 центов.
 ```
 
 # Implemented 
@@ -31,7 +31,12 @@ normalized_text
 
 # Not implemented
 1. Time
-2. Probably a lot more
+2. Percentages
+3. Short forms like "г." -> "город"
+3. Probably a lot more
+
+# Acknowledgements
+I want to thank OpenAI's ChatGPT for writing this code. I would've never been able to write it myself since I'm too lazy for that.
 
 # Call for collaboration
 Feel free to use this code. You can share it, copy it, modify as you wish. However, pretty please, *if you improved the solution somehow, add your modifications here too.*
