@@ -151,10 +151,14 @@ def normalize_text_with_numbers(text):
     detected_numbers.sort(key=lambda x: x['start'], reverse=True)
     
     # Replace each number with its normalized form
+    digit_words = ['ноль', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять']
     for num in detected_numbers:
-        number_value = int(num['number'])
-        # For large numbers that are out of the range of the 'number_to_words' function, use 'number_to_words_digit_by_digit'
-        if number_value >= 1_000_000_000_000:
+        digits = num['number']
+        number_value = int(digits)
+        # A leading zero (e.g. "06", "007") signals a digit string, not a quantity: read it out digit by digit.
+        if len(digits) > 1 and digits[0] == '0':
+            normalized_number = ' '.join(digit_words[int(d)] for d in digits)
+        elif number_value >= 1_000_000_000_000:
             normalized_number = number_to_words_digit_by_digit(number_value)
         else:
             normalized_number = number_to_words(number_value)
@@ -372,9 +376,58 @@ def normalize_dates(text):
     text = _re_year_god.sub(year_god, text)
     return text
 
+# Standalone symbols and non-Russian letters spoken by name.
+_symbol_map = {
+    '&': 'и', '#': 'решетка', '_': 'нижнее подчеркивание',
+    '²': 'в квадрате', '³': 'в кубе', '№': 'номер',
+    # Cyrillic letters outside the Russian alphabet
+    'ї': 'и', 'і': 'и', 'ў': 'у', 'є': 'е', 'ґ': 'г',
+    # Greek alphabet (lower and upper case spoken with the same name)
+    'α': 'альфа', 'β': 'бета', 'γ': 'гамма', 'δ': 'дельта', 'ε': 'эпсилон',
+    'ζ': 'дзета', 'η': 'эта', 'θ': 'тета', 'ι': 'йота', 'κ': 'каппа',
+    'λ': 'лямбда', 'μ': 'мю', 'ν': 'ню', 'ξ': 'кси', 'ο': 'омикрон',
+    'π': 'пи', 'ρ': 'ро', 'σ': 'сигма', 'ς': 'сигма', 'τ': 'тау',
+    'υ': 'ипсилон', 'φ': 'фи', 'χ': 'хи', 'ψ': 'пси', 'ω': 'омега',
+}
+_symbol_map.update({k.upper(): v for k, v in list(_symbol_map.items()) if k.upper() != k})
+
+def normalize_symbols(text):
+    """Replace standalone symbols / foreign letters with their spoken names."""
+    for sym, word in _symbol_map.items():
+        if sym in text:
+            text = text.replace(sym, ' ' + word + ' ')
+    return re.sub(r' {2,}', ' ', text).strip() if text else text
+
+# Place value (genitive plural) for the fractional part of a decimal, by digit count.
+_decimal_places = {1: 'десятых', 2: 'сотых', 3: 'тысячных', 4: 'десятитысячных',
+                   5: 'стотысячных', 6: 'миллионных'}
+
+def _feminine_last(words):
+    """Russian fractions count in the feminine: один->одна, два->две (last word only)."""
+    if words and words[-1] == 'один':
+        words[-1] = 'одна'
+    elif words and words[-1] == 'два':
+        words[-1] = 'две'
+    return words
+
+def normalize_decimals(text):
+    """Read decimal-comma numbers: 1,2 -> 'одна целая и две десятых'."""
+    def repl(m):
+        int_part, frac_part = m.group(1), m.group(2)
+        place = _decimal_places.get(len(frac_part))
+        if place is None:
+            return m.group(0)
+        int_words = _feminine_last(number_to_words(int(int_part)).split())
+        whole = 'целая' if (int(int_part) % 10 == 1 and int(int_part) % 100 != 11) else 'целых'
+        frac_words = _feminine_last(number_to_words(int(frac_part)).split())
+        return f"{' '.join(int_words)} {whole} и {' '.join(frac_words)} {place}"
+    return re.sub(r'\b(\d+),(\d+)\b', repl, text)
+
 def normalize_russian(text):
     text = expand_abbreviations(text)
+    text = normalize_symbols(text)
     text = normalize_dates(text)
+    text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
     text = normalize_text_with_numbers(text)
