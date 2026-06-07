@@ -50,8 +50,37 @@ Notes:
 
 # Validation
 Tested against the Google/Kaggle Russian text-normalization set
-(`ru_train.csv`, 10.57M tokens): exact-match token error 27.0% -> 9.0%
-(compared ё/е-insensitively, since the reference data drops ё).
+(`ru_train.csv`, 10,574,516 tokens). Each token's input is normalized in
+isolation and compared to the gold output; "accuracy" is exact string match,
+compared ё/е-insensitively (the reference data writes only е, this script keeps ё).
+"Original" is the script before these changes.
+
+| Domain (class) | Tokens | Original acc. | Current acc. | Notes |
+|---|--:|--:|--:|---|
+| PLAIN       | 7,360,439 |  69.9% |  92.2% | residual: Latin spelled per-letter in gold |
+| PUNCT       | 2,288,640 | 100.0% | 100.0% | passthrough |
+| CARDINAL    |   272,442 |  51.2% |  77.0% | residual: oblique case agreement |
+| LETTERS     |   189,528 |   0.8% |   0.0% | not targeted (gold uses bare letters, worse for TTS) |
+| DATE        |   185,959 |   0.0% |  84.2% | residual: bare years, ambiguous day-case |
+| VERBATIM    |   157,912 |  91.1% |  95.7% | symbol / Greek map |
+| ORDINAL     |    46,738 |   0.0% |  40.7% | residual: bare-number ordinals (need context) |
+| MEASURE     |    40,534 |   3.1% |  19.9% | residual: oblique case agreement |
+| TELEPHONE   |    10,088 |   0.3% |   1.4% | not targeted (irregular ISBN grouping) |
+| DECIMAL     |     7,297 |   6.1% |  49.8% | residual: oblique case agreement |
+| ELECTRONIC  |     5,832 |   2.6% |   2.6% | not targeted (English G2P + markers) |
+| MONEY       |     2,690 |  14.4% |  30.3% | residual: case agreement |
+| FRACTION    |     2,460 |   0.0% |  66.0% | residual: context-dependent case |
+| DIGIT       |     2,012 |   0.0% | 100.0% | leading-zero digit strings |
+| TIME        |     1,945 |   0.0% |  84.9% | residual: HH:MM:SS, oblique case |
+| **Overall** | **10,574,516** | **73.0%** | **91.1%** | exact-match token accuracy |
+
+The remaining error is dominated by things rules cannot resolve without a token
+classifier or sentence context: grammatical case agreement (`500 км` ->
+`пятисот километров`), disambiguating a bare number as cardinal/ordinal/year, and
+classes left untargeted on purpose (LETTERS, TELEPHONE, ELECTRONIC). The test set
+is treated as a regression guard, not a target — some choices (keeping ё, reading
+acronyms as words, nominative Roman numerals) favour TTS quality over this score.
+
 Run `python3 test_russian.py` for the regression cases.
 
 # Not implemented (needs sentence context or a token classifier, not pure rules)
