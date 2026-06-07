@@ -1,0 +1,26 @@
+# Russian textual abbreviations -> spoken form.
+# Source: NVIDIA NeMo-text-processing, ru/data/whitelist.tsv (Apache-2.0)
+#   https://github.com/NVIDIA/NeMo-text-processing
+# Format: <abbreviation><TAB><expansion>   (lines starting with # are ignored).
+# Matching is case-insensitive and tolerant of spaces after the dots.
+#
+# Only entries with a single, context-independent expansion are kept. NeMo's
+# whitelist resolves the rest by context (a WFST), which a deterministic rule
+# engine cannot do, so these are intentionally omitted:
+#   г. (год/году/года/город), кв. (квартира/квартал), ЖК (5 senses),
+#   комн./эт. (adjective agreement), экз. (count agreement).
+гг.	годы
+р-н	район
+до н. э.	до нашей эры
+н. э.	нашей эры
+см. также	смотри также
+с.ш.	северной широты
+ю.ш.	южной широты
+в.д.	восточной долготы
+з.д.	западной долготы
+и т. д.	и так далее
+и т. п.	и тому подобное
+б/у	бывший в употреблении
+и др.	и другие
+и пр.	и прочие
+т.е.	то есть

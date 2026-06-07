@@ -38,9 +38,9 @@ CASES = [
     ("ї", "и"),
     # Dates/ordinals keep ё; comparison below folds ё->е (gold drops ё).
     ("4 июля 2012", "четвёртого июля две тысячи двенадцатого года"),
-    # Roman numerals read as ordinals (genitive).
-    ("XIX", "девятнадцатого"),
-    ("III", "третьего"),
+    # Roman numerals read as ordinals (nominative default).
+    ("XIX век", "девятнадцатый век"),
+    ("том III", "том третий"),
     # Clock times (HH:MM); HH:MM:SS is left for the digit reader.
     ("06:06", "шесть часов шесть минут"),
     ("07:00", "семь часов"),
@@ -48,6 +48,29 @@ CASES = [
     # Simple fractions.
     ("2/3", "две третьих"),
     ("653/26", "шестьсот пятьдесят три двадцать шестых"),
+
+    # --- Real-world cases (beyond the test set) -------------------------------
+    # Space/NBSP-grouped thousands.
+    ("10 000 рублей", "десять тысяч рублей"),
+    ("1 234 567", "один миллион двести тридцать четыре тысячи пятьсот шестьдесят семь"),
+    # Percentages, negatives, multipliers, big numbers.
+    ("50%", "пятьдесят процентов"),
+    ("1%", "один процент"),
+    ("-5 градусов", "минус пять градусов"),
+    ("1 млн", "один миллион"),
+    ("5 млн", "пять миллионов"),
+    ("1000000000000000", "один квадриллион"),
+    # Abbreviations (NeMo whitelist) and acronyms (vowel heuristic).
+    ("и т.д.", "и так далее"),
+    ("б/у", "бывший в употреблении"),
+    ("НАТО", "нато"),
+    ("ВАЖНО", "важно"),
+    ("СССР", "эс эс эс эр"),
+    # Symbols, units, web, Latin-abbrev guard.
+    ("100°C", "сто градусов цельсия"),
+    ("№5", "номер пять"),
+    ("example.com", "ексампле точка ком"),
+    ("CD", "кд"),
 ]
 
 

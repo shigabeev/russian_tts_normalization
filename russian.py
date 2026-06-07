@@ -1,4 +1,22 @@
 import re
+import os
+
+# ---- Vocabulary files (data/) -------------------------------------------------
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+
+def _read_lines(name):
+    """Yield non-empty, non-comment, stripped lines from a data file."""
+    try:
+        with open(os.path.join(_DATA_DIR, name), encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    yield line
+    except FileNotFoundError:
+        return
+
+def _load_set(name):
+    return {line.upper() for line in _read_lines(name)}
 
 # Updated mapping dictionary with common digraphs
 cyrrilization_mapping_extended = {
@@ -27,19 +45,60 @@ pronunciation_map = {
     'Э': 'э', 'Ю': 'ю', 'Я': 'я'
 }
 
-# Function to expand abbreviations in the text
+# ---- Textual abbreviations (data/abbreviations.txt) ---------------------------
+def _load_abbreviations():
+    """Return (compiled_regex, {canonical_key: expansion})."""
+    mapping = {}
+    for line in _read_lines('abbreviations.txt'):
+        if '\t' not in line:
+            continue
+        key, value = line.split('\t', 1)
+        mapping[re.sub(r'\s+', '', key).lower()] = value.strip()
+    if not mapping:
+        return None, {}
+    # Build one alternation, longest key first; dots may be followed by spaces.
+    def to_pattern(key):
+        out = ''
+        for ch in key:
+            out += r'\.\s*' if ch == '.' else (r'\s*' if ch == ' ' else re.escape(ch))
+        return out
+    keys = sorted({line.split('\t', 1)[0] for line in _read_lines('abbreviations.txt') if '\t' in line},
+                  key=len, reverse=True)
+    pattern = r'(?<![А-Яа-яёЁ])(?:' + '|'.join(to_pattern(k) for k in keys) + r')(?![А-Яа-яёЁ])'
+    return re.compile(pattern, re.IGNORECASE), mapping
+
+_abbr_re, _abbr_map = _load_abbreviations()
+
+def normalize_abbreviations(text):
+    """Expand common textual abbreviations (т.д. -> так далее, ул. -> улица)."""
+    if not _abbr_re:
+        return text
+    def repl(m):
+        canon = re.sub(r'\s+', '', m.group(0)).lower()
+        return _abbr_map.get(canon, m.group(0))
+    return _abbr_re.sub(repl, text)
+
+# ---- Acronyms ----------------------------------------------------------------
+# Whether an all-caps acronym is read as a word (НАТО) or spelled out (СССР) is a
+# pronunciation-lexicon question, not a flat list. We use a vowel heuristic, which
+# needs no unverified data: a vowel-less run is spelled letter by letter, anything
+# pronounceable (incl. emphasised words like ВАЖНО) is read as a word. The known
+# exceptions (e.g. США, read letter by letter despite vowels) would need a vetted
+# lexicon, which is intentionally not bundled.
+_RU_VOWELS = set('АЕЁИОУЫЭЮЯ')
+
+def _spell_letters(token):
+    return ' '.join(pronunciation_map[c] for c in token if c in pronunciation_map)
+
 def expand_abbreviations(text):
-    # Regex to find sequences of uppercase Cyrillic letters
-    abbreviations = re.findall(r'\b[А-ЯЁ]{2,}\b', text)
-
-    # Expand each abbreviation using the pronunciation map
-    for abbr in abbreviations:
-        # Create a pronounced form of the abbreviation
-        pronounced_form = ' '.join(pronunciation_map[letter] for letter in abbr if letter in pronunciation_map)
-        # Replace the abbreviation with its pronounced form
-        text = text.replace(abbr, pronounced_form)
-
-    return text
+    """Read all-caps Cyrillic acronyms: vowel-less runs (СССР) are spelled out,
+    pronounceable ones (НАТО) and emphasised words (ВАЖНО) are lowercased."""
+    def repl(m):
+        token = m.group(0)
+        if not (set(token.upper()) & _RU_VOWELS):
+            return _spell_letters(token.upper())
+        return token.lower()
+    return re.sub(r'\b[А-ЯЁ]{2,}\b', repl, text)
 
 
 def cyrrilize(text):
@@ -75,9 +134,14 @@ def number_to_words(n):
     tens = ['','десять','двадцать','тридцать','сорок','пятьдесят','шестьдесят','семьдесят','восемьдесят','девяносто']
     hundreds = ['','сто','двести','триста','четыреста','пятьсот','шестьсот','семьсот','восемьсот','девятьсот']
     
-    thousand_units = ['тысяча', 'тысячи', 'тысяч']
-    million_units = ['миллион', 'миллиона', 'миллионов']
-    billion_units = ['миллиард', 'миллиарда', 'миллиардов']
+    # (scale value, plural forms, feminine?) from largest to smallest.
+    scales = [
+        (10**15, ['квадриллион', 'квадриллиона', 'квадриллионов'], False),
+        (10**12, ['триллион', 'триллиона', 'триллионов'], False),
+        (10**9,  ['миллиард', 'миллиарда', 'миллиардов'], False),
+        (10**6,  ['миллион', 'миллиона', 'миллионов'], False),
+        (10**3,  ['тысяча', 'тысячи', 'тысяч'], True),
+    ]
 
     words = []
 
@@ -103,26 +167,24 @@ def number_to_words(n):
         else:
             return [hundreds[number // 100]] + under_thousand(number % 100)
 
-    # Break the number into the billions, millions, thousands, and the rest
-    billions = n // 1_000_000_000
-    millions = (n % 1_000_000_000) // 1_000_000
-    thousands = (n % 1_000_000) // 1_000
-    remainder = n % 1_000
+    # Handle very large numbers (>= 10^18) digit by digit rather than failing.
+    if n >= 10**18:
+        return number_to_words_digit_by_digit(n)
 
-    if billions:
-        words += under_thousand(billions) + [russian_plural(billions, billion_units)]
-    if millions:
-        words += under_thousand(millions) + [russian_plural(millions, million_units)]
-    if thousands:
-        # Special case for 'one' and 'two' in thousands
-        if thousands % 10 == 1 and thousands % 100 != 11:
-            pass  # Russian drops "одна" before "тысяча" (1873 -> "тысяча восемьсот...")
-        elif thousands % 10 == 2 and thousands % 100 != 12:
-            words.append('две')
-        else:
-            words += under_thousand(thousands)
-        words.append(russian_plural(thousands, thousand_units))
-    words += under_thousand(remainder)
+    for value, forms, feminine in scales:
+        count = (n // value) % 1000
+        if not count:
+            continue
+        chunk = under_thousand(count)
+        if feminine:
+            if chunk[-1] == 'один':
+                chunk[-1] = 'одна'
+            elif chunk[-1] == 'два':
+                chunk[-1] = 'две'
+            if count == 1:
+                chunk = chunk[:-1]  # solitary thousand: "тысяча", not "одна тысяча"
+        words += chunk + [russian_plural(count, forms)]
+    words += under_thousand(n % 1000)
 
     return ' '.join(word for word in words if word)
 
@@ -158,10 +220,8 @@ def normalize_text_with_numbers(text):
         # A leading zero (e.g. "06", "007") signals a digit string, not a quantity: read it out digit by digit.
         if len(digits) > 1 and digits[0] == '0':
             normalized_number = ' '.join(digit_words[int(d)] for d in digits)
-        elif number_value >= 1_000_000_000_000:
-            normalized_number = number_to_words_digit_by_digit(number_value)
         else:
-            normalized_number = number_to_words(number_value)
+            normalized_number = number_to_words(number_value)  # self-handles >= 10^18
         # Replace the original number in the text with its normalized form
         text = text[:num['start']] + normalized_number + text[num['end']:]
     
@@ -381,7 +441,13 @@ def normalize_dates(text):
     return text
 
 # Standalone symbols and non-Russian letters spoken by name.
+# Multi-character keys come first so they are replaced before their substrings.
 _symbol_map = {
+    '°C': 'градусов цельсия', '°С': 'градусов цельсия', '°F': 'градусов фаренгейта',
+    '°': 'градусов', '±': 'плюс минус', '≈': 'приблизительно равно', '≠': 'не равно',
+    '≤': 'меньше или равно', '≥': 'больше или равно', '×': 'умножить на',
+    '÷': 'разделить на', '=': 'равно', '<': 'меньше', '>': 'больше',
+    '‰': 'промилле', '§': 'параграф', '₿': 'биткоин', '•': ' ', '·': ' ',
     '&': 'и', '#': 'решетка', '_': 'нижнее подчеркивание',
     '²': 'в квадрате', '³': 'в кубе', '№': 'номер',
     # Cyrillic letters outside the Russian alphabet
@@ -414,17 +480,20 @@ def _feminine_last(words):
         words[-1] = 'две'
     return words
 
+def _decimal_to_words(int_part, frac_part):
+    """'7', '54' -> 'семь целых и пятьдесят четыре сотых' (None if unsupported length)."""
+    place = _decimal_places.get(len(frac_part))
+    if place is None:
+        return None
+    int_words = _feminine_last(number_to_words(int(int_part)).split())
+    whole = 'целая' if (int(int_part) % 10 == 1 and int(int_part) % 100 != 11) else 'целых'
+    frac_words = _feminine_last(number_to_words(int(frac_part)).split())
+    return f"{' '.join(int_words)} {whole} и {' '.join(frac_words)} {place}"
+
 def normalize_decimals(text):
     """Read decimal-comma numbers: 1,2 -> 'одна целая и две десятых'."""
     def repl(m):
-        int_part, frac_part = m.group(1), m.group(2)
-        place = _decimal_places.get(len(frac_part))
-        if place is None:
-            return m.group(0)
-        int_words = _feminine_last(number_to_words(int(int_part)).split())
-        whole = 'целая' if (int(int_part) % 10 == 1 and int(int_part) % 100 != 11) else 'целых'
-        frac_words = _feminine_last(number_to_words(int(frac_part)).split())
-        return f"{' '.join(int_words)} {whole} и {' '.join(frac_words)} {place}"
+        return _decimal_to_words(m.group(1), m.group(2)) or m.group(0)
     return re.sub(r'\b(\d+),(\d+)\b', repl, text)
 
 # Russian ordinal suffix (after a hyphen) -> grammatical form, e.g. "1-й" / "190-го" / "1950-х".
@@ -435,10 +504,11 @@ _ordinal_suffix_form = {
 _re_ordinal_suffix = re.compile(r'(\d+)[-–—](' + '|'.join(_ordinal_suffix_form) + r')\b')
 
 # Roman numerals (>=2 chars) in Russian text are almost always ordinals; their case
-# is context-dependent, so we read them in the genitive (the dominant form in the data).
+# is context-dependent, so we read them in the nominative (the natural default for
+# "XIX век", "Людовик XIV", "том III").
 _roman_values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
-_re_roman = re.compile(
-    r'\b(?=[MDCLXVI]{2,}\b)M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})\b')
+_re_roman = re.compile(r'\b[MDCLXVI]{2,}\b')
+_re_roman_valid = re.compile(r'^M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$')
 
 def _roman_to_int(s):
     total = prev = 0
@@ -448,13 +518,20 @@ def _roman_to_int(s):
         prev = v
     return total
 
+# Latin abbreviations that are also valid Roman numerals — do NOT read as ordinals.
+_roman_stoplist = {'CD', 'DVD', 'MD', 'DC', 'MC', 'MI', 'MM', 'DI', 'DIV', 'MIX', 'CIV', 'LCD'}
+
 def normalize_ordinals(text):
     """Expand ordinals written with a grammatical suffix (1-й, 190-го) and
     Roman numerals (XIX -> 'девятнадцатого')."""
     text = _re_ordinal_suffix.sub(
         lambda m: number_to_ordinal_words(int(m.group(1)), _ordinal_suffix_form[m.group(2)]), text)
-    text = _re_roman.sub(lambda m: number_to_ordinal_words(_roman_to_int(m.group(0)), 'gen'), text)
-    return text
+    def roman(m):
+        tok = m.group(0)
+        if tok in _roman_stoplist or not _re_roman_valid.match(tok):
+            return tok
+        return number_to_ordinal_words(_roman_to_int(tok), 'nom_m')
+    return _re_roman.sub(roman, text)
 
 def _plural(n, forms):
     """Pick the Russian plural form: (one, few, many)."""
@@ -491,18 +568,102 @@ def normalize_fractions(text):
         return f"{numer} {number_to_ordinal_words(den, 'pl')}"
     return _re_fraction.sub(repl, text)
 
+# ---- Modern / web text cleanup -----------------------------------------------
+def normalize_typography(text):
+    """Normalise Unicode spaces and strip markdown emphasis markers. Quotes and
+    other punctuation are left intact (a TTS engine ignores them, and removing
+    them would only diverge from the reference data)."""
+    text = re.sub(r"[\u00a0\u2009\u202f\u2060]", " ", text)  # NBSP family -> space
+    text = re.sub(r"\*\*|__|`", "", text)                      # markdown bold / code
+    return text
+
+# Email / URL: spell symbols out and let cyrrilize transliterate the latin parts.
+_re_email = re.compile(r'\b[\w.+-]+@[\w-]+\.[A-Za-zА-Яа-я]{2,}\b')
+_re_url = re.compile(r'\b(?:https?://|www\.)\S+|\b[\w-]+\.(?:com|ru|org|net|info|io|edu|gov|рф)\b', re.I)
+_web_symbols = {'@': ' собака ', '.': ' точка ', '/': ' слэш ', ':': ' двоеточие ',
+                '-': ' дефис ', '_': ' подчёркивание '}
+
+def normalize_web(text):
+    """Spell out e-mail addresses and URLs (example.com -> 'ексампле точка ком')."""
+    def spell(m):
+        s = m.group(0).rstrip('.,!?')
+        for sym, word in _web_symbols.items():
+            s = s.replace(sym, word)
+        return re.sub(r' {2,}', ' ', s).strip()
+    text = _re_email.sub(spell, text)
+    return _re_url.sub(spell, text)
+
+# ---- Number pre-processing ----------------------------------------------------
+def normalize_number_groups(text):
+    """Join space-separated digit groups into one number: '1 234 567' -> '1234567'."""
+    return re.sub(r'\b\d{1,3}(?: \d{3})+\b', lambda m: m.group(0).replace(' ', ''), text)
+
+def normalize_negatives(text):
+    """Read a leading minus before a number: '-5' -> 'минус 5'."""
+    return re.sub(r'(?:(?<=^)|(?<=[\s(\[]))[-−](\d)', r'минус \1', text)
+
+# Quantity multipliers with grammatical agreement (handled here, not in the flat
+# abbreviation list, so the number agrees: 1 млн -> один миллион, 5 млн -> пять миллионов).
+_multipliers = {
+    'тыс': (['тысяча', 'тысячи', 'тысяч'], True),
+    'млн': (['миллион', 'миллиона', 'миллионов'], False),
+    'млрд': (['миллиард', 'миллиарда', 'миллиардов'], False),
+    'трлн': (['триллион', 'триллиона', 'триллионов'], False),
+}
+_re_multiplier = re.compile(r'\b(\d+)\s*(тыс|млн|млрд|трлн)\.?(?![а-яё])', re.I)
+
+def normalize_multipliers(text):
+    def repl(m):
+        n = int(m.group(1))
+        forms, feminine = _multipliers[m.group(2).lower()]
+        words = number_to_words(n).split()
+        if feminine:
+            _feminine_last(words)
+        return ' '.join(words) + ' ' + _plural(n, forms)
+    return _re_multiplier.sub(repl, text)
+
+def normalize_percent(text):
+    """Read percentages: 50% -> 'пятьдесят процентов', 3,5% -> '... процента'."""
+    forms = ('процент', 'процента', 'процентов')
+    def repl(m):
+        num = m.group(1)
+        if ',' in num or '.' in num:
+            ip, fp = re.split(r'[.,]', num, 1)
+            words = _decimal_to_words(ip, fp)
+            return (words + ' процента') if words else m.group(0)
+        n = int(num)
+        return f"{number_to_words(n)} {_plural(n, forms)}"
+    return re.sub(r'(\d+(?:[.,]\d+)?)\s*%', repl, text)
+
 def normalize_russian(text):
+    text = normalize_typography(text)
+    text = normalize_web(text)
+    text = normalize_abbreviations(text)
     text = expand_abbreviations(text)
     text = normalize_symbols(text)
+    text = normalize_number_groups(text)
     text = normalize_dates(text)
     text = normalize_ordinals(text)
     text = normalize_time(text)
     text = normalize_fractions(text)
+    text = normalize_percent(text)
+    text = normalize_multipliers(text)
     text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
+    text = normalize_negatives(text)
     text = normalize_text_with_numbers(text)
     text = cyrrilize(text)
+    text = re.sub(r' {2,}', ' ', text).strip()
     # ё is kept intentionally (it carries pronunciation for TTS); the reference
     # data drops it, so evaluation should compare ё/е-insensitively.
     return text
+
+def _cli():
+    """Read text from stdin, write normalized text to stdout."""
+    import sys
+    data = sys.stdin.read()
+    sys.stdout.write(normalize_russian(data) + ('\n' if data.endswith('\n') else ''))
+
+if __name__ == '__main__':
+    _cli()
