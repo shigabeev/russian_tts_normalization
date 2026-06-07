@@ -43,19 +43,23 @@ def expand_abbreviations(text):
 
 
 def cyrrilize(text):
-    """Convert a given text from Latin script to an approximate Cyrillic script in lowercase,
-    taking into account common digraphs."""
-    text = text.lower()  # Convert text to lowercase
+    """Transliterate only Latin letters to approximate Cyrillic, leaving Cyrillic
+    text (and its original case) and all other characters untouched."""
     cyrrilized_text = ""
     i = 0
     while i < len(text):
-        if i + 1 < len(text) and text[i:i+2] in cyrrilization_mapping_extended:
-            # If a digraph is found, add its cyrrilization and increment by 2
-            cyrrilized_text += cyrrilization_mapping_extended[text[i:i+2]]
-            i += 2
+        ch = text[i]
+        if ch.isascii() and ch.isalpha():
+            digraph = text[i:i+2].lower()
+            if (i + 1 < len(text) and text[i+1].isascii() and text[i+1].isalpha()
+                    and digraph in cyrrilization_mapping_extended):
+                cyrrilized_text += cyrrilization_mapping_extended[digraph]
+                i += 2
+            else:
+                cyrrilized_text += cyrrilization_mapping_extended.get(ch.lower(), ch)
+                i += 1
         else:
-            # Add the cyrrilization of a single character
-            cyrrilized_text += cyrrilization_mapping_extended.get(text[i], text[i])
+            cyrrilized_text += ch
             i += 1
     return cyrrilized_text
 
@@ -112,7 +116,7 @@ def number_to_words(n):
     if thousands:
         # Special case for 'one' and 'two' in thousands
         if thousands % 10 == 1 and thousands % 100 != 11:
-            words.append('одна')
+            pass  # Russian drops "одна" before "тысяча" (1873 -> "тысяча восемьсот...")
         elif thousands % 10 == 2 and thousands % 100 != 12:
             words.append('две')
         else:

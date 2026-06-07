@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+text-normalization-challenge-russian-language/
+text-normalization-challenge-russian-language.zip
+ru_sample_submission.csv
