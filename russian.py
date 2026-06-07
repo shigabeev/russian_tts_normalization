@@ -434,20 +434,75 @@ _ordinal_suffix_form = {
 }
 _re_ordinal_suffix = re.compile(r'(\d+)[-–—](' + '|'.join(_ordinal_suffix_form) + r')\b')
 
+# Roman numerals (>=2 chars) in Russian text are almost always ordinals; their case
+# is context-dependent, so we read them in the genitive (the dominant form in the data).
+_roman_values = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+_re_roman = re.compile(
+    r'\b(?=[MDCLXVI]{2,}\b)M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})\b')
+
+def _roman_to_int(s):
+    total = prev = 0
+    for ch in reversed(s):
+        v = _roman_values[ch]
+        total += -v if v < prev else v
+        prev = v
+    return total
+
 def normalize_ordinals(text):
-    """Expand explicit ordinals written with a grammatical suffix (1-й, 190-го, 1950-х)."""
+    """Expand ordinals written with a grammatical suffix (1-й, 190-го) and
+    Roman numerals (XIX -> 'девятнадцатого')."""
+    text = _re_ordinal_suffix.sub(
+        lambda m: number_to_ordinal_words(int(m.group(1)), _ordinal_suffix_form[m.group(2)]), text)
+    text = _re_roman.sub(lambda m: number_to_ordinal_words(_roman_to_int(m.group(0)), 'gen'), text)
+    return text
+
+def _plural(n, forms):
+    """Pick the Russian plural form: (one, few, many)."""
+    if n % 10 == 1 and n % 100 != 11:
+        return forms[0]
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return forms[1]
+    return forms[2]
+
+# HH:MM clock times (not HH:MM:SS, which the dataset leaves untouched).
+_re_time = re.compile(r'(?<![\d:])(\d{1,2}):([0-5]\d)(?![\d:])')
+
+def normalize_time(text):
+    """Read HH:MM clock times: 06:06 -> 'шесть часов шесть минут', 07:00 -> 'семь часов'."""
     def repl(m):
-        return number_to_ordinal_words(int(m.group(1)), _ordinal_suffix_form[m.group(2)])
-    return _re_ordinal_suffix.sub(repl, text)
+        h, mn = int(m.group(1)), int(m.group(2))
+        out = f"{number_to_words(h)} {_plural(h, ('час', 'часа', 'часов'))}"
+        if mn:
+            mins = _feminine_last(number_to_words(mn).split())
+            out += f" {' '.join(mins)} {_plural(mn, ('минута', 'минуты', 'минут'))}"
+        return out
+    return _re_time.sub(repl, text)
+
+# Simple fractions a/b -> numerator (feminine) + denominator as a genitive-plural ordinal.
+_re_fraction = re.compile(r'\b(\d+)/(\d+)\b')
+
+def normalize_fractions(text):
+    """Read 'a/b' as 'two thirds': 2/3 -> 'две третьих', 653/26 -> '... двадцать шестых'."""
+    def repl(m):
+        num, den = int(m.group(1)), int(m.group(2))
+        if den >= 10**12:
+            return m.group(0)
+        numer = ' '.join(_feminine_last(number_to_words(num).split()))
+        return f"{numer} {number_to_ordinal_words(den, 'pl')}"
+    return _re_fraction.sub(repl, text)
 
 def normalize_russian(text):
     text = expand_abbreviations(text)
     text = normalize_symbols(text)
     text = normalize_dates(text)
     text = normalize_ordinals(text)
+    text = normalize_time(text)
+    text = normalize_fractions(text)
     text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
     text = normalize_text_with_numbers(text)
     text = cyrrilize(text)
+    # ё is kept intentionally (it carries pronunciation for TTS); the reference
+    # data drops it, so evaluation should compare ё/е-insensitively.
     return text

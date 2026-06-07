@@ -36,14 +36,30 @@ CASES = [
     ("²", "в квадрате"),
     ("α", "альфа"),
     ("ї", "и"),
+    # Dates/ordinals keep ё; comparison below folds ё->е (gold drops ё).
+    ("4 июля 2012", "четвёртого июля две тысячи двенадцатого года"),
+    # Roman numerals read as ordinals (genitive).
+    ("XIX", "девятнадцатого"),
+    ("III", "третьего"),
+    # Clock times (HH:MM); HH:MM:SS is left for the digit reader.
+    ("06:06", "шесть часов шесть минут"),
+    ("07:00", "семь часов"),
+    ("02:33", "два часа тридцать три минуты"),
+    # Simple fractions.
+    ("2/3", "две третьих"),
+    ("653/26", "шестьсот пятьдесят три двадцать шестых"),
 ]
+
+
+def _fold(s):
+    return s.replace('ё', 'е').replace('Ё', 'Е')  # ё is kept in output but compared insensitively
 
 
 def main():
     failures = []
     for before, expected in CASES:
         got = normalize_russian(before)
-        if got != expected:
+        if _fold(got) != _fold(expected):
             failures.append((before, expected, got))
     for before, expected, got in failures:
         print(f"FAIL {before!r}: expected {expected!r}, got {got!r}")
