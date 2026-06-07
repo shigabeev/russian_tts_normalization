@@ -38,9 +38,10 @@ print(normalized_text)
 12. Symbols / foreign letters by name: "&" -> "и", "²" -> "в квадрате", "°C", Greek
 13. Space/NBSP-grouped thousands: "1 234 567" -> one number; negatives: "-5" -> "минус пять"
 14. Quantity multipliers: "5 млн" -> "пять миллионов" (agrees with the number)
-15. Textual abbreviations (data/abbreviations.txt): "и т.д." -> "и так далее"
-16. Acronyms: vowel-less spelled out ("СССР" -> "эс эс эс эр"), pronounceable read as words ("НАТО" -> "нато")
-17. E-mail/URL spell-out: "example.com" -> "ексампле точка ком"
+15. Units of measure: "5 кг" -> "пять килограммов", "90 км/ч" -> "...в час", "5 ГБ", "25°"
+16. Textual abbreviations (data/abbreviations.txt): "и т.д." -> "и так далее"
+17. Acronyms: vowel-less spelled out ("СССР" -> "эс эс эс эр"), pronounceable read as words ("НАТО" -> "нато")
+18. E-mail/URL spell-out: "example.com" -> "ексампле точка ком"
 
 Notes:
 - The letter ё is kept in the output (it carries pronunciation for TTS).

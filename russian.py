@@ -444,7 +444,7 @@ def normalize_dates(text):
 # Multi-character keys come first so they are replaced before their substrings.
 _symbol_map = {
     '°C': 'градусов цельсия', '°С': 'градусов цельсия', '°F': 'градусов фаренгейта',
-    '°': 'градусов', '±': 'плюс минус', '≈': 'приблизительно равно', '≠': 'не равно',
+    '±': 'плюс минус', '≈': 'приблизительно равно', '≠': 'не равно',
     '≤': 'меньше или равно', '≥': 'больше или равно', '×': 'умножить на',
     '÷': 'разделить на', '=': 'равно', '<': 'меньше', '>': 'больше',
     '‰': 'промилле', '§': 'параграф', '₿': 'биткоин', '•': ' ', '·': ' ',
@@ -635,12 +635,42 @@ def normalize_percent(text):
         return f"{number_to_words(n)} {_plural(n, forms)}"
     return re.sub(r'(\d+(?:[.,]\d+)?)\s*%', repl, text)
 
+# ---- Units of measurement (data/measurements.tsv) ----------------------------
+def _load_measurements():
+    units = {}
+    for line in _read_lines('measurements.tsv'):
+        parts = line.split('\t')
+        if len(parts) == 5:
+            ab, one, few, many, gender = parts
+            units[ab] = (one, few, many, gender)
+    return units
+
+_measurements = _load_measurements()
+# Case-sensitive, longest unit first, number required before the unit, and no
+# letter immediately after (so "м" does not fire inside "метр", "°" not in "°C").
+_re_measure = re.compile(
+    r'(?<![\d.,])(\d+)\s*(' +
+    '|'.join(re.escape(u) for u in sorted(_measurements, key=len, reverse=True)) +
+    r')(?![A-Za-zА-Яа-яёЁ])') if _measurements else None
+
+def normalize_measurements(text):
+    """Read a number followed by a unit, agreeing in count: 5 кг -> 'пять
+    килограммов', 2 кг -> 'два килограмма', 1 кг -> 'один килограмм'."""
+    if not _re_measure:
+        return text
+    def repl(m):
+        n = int(m.group(1))
+        one, few, many, gender = _measurements[m.group(2)]
+        words = number_to_words(n).split()
+        if gender == 'f':
+            _feminine_last(words)
+        return ' '.join(words) + ' ' + _plural(n, (one, few, many))
+    return _re_measure.sub(repl, text)
+
 def normalize_russian(text):
     text = normalize_typography(text)
     text = normalize_web(text)
     text = normalize_abbreviations(text)
-    text = expand_abbreviations(text)
-    text = normalize_symbols(text)
     text = normalize_number_groups(text)
     text = normalize_dates(text)
     text = normalize_ordinals(text)
@@ -648,6 +678,9 @@ def normalize_russian(text):
     text = normalize_fractions(text)
     text = normalize_percent(text)
     text = normalize_multipliers(text)
+    text = normalize_measurements(text)   # before acronym speller (ГБ/МБ are units, not letters)
+    text = expand_abbreviations(text)
+    text = normalize_symbols(text)
     text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
