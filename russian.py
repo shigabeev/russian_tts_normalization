@@ -317,16 +317,20 @@ _count_genitive_prefix = {
     'шесть': 'шести', 'семь': 'семи', 'восемь': 'восьми', 'девять': 'девяти',
 }
 
+# Endings for an ordinal, keyed by grammatical form, for hard (-ый/-ой) and soft (-ий) stems.
+_ordinal_endings = {
+    'nom_n': ('ое', 'ье'), 'nom_f': ('ая', 'ья'), 'nom_pl': ('ые', 'ьи'),
+    'gen': ('ого', 'ьего'), 'dat': ('ому', 'ьему'), 'prep': ('ом', 'ьем'),
+    'pl': ('ых', 'ьих'), 'acc_f': ('ую', 'ью'),
+}
+
 def _inflect_ordinal(stem, form):
-    """Inflect a nominative-masculine ordinal stem into the requested form.
-    form: 'nom_m' (год), 'nom_n' (день/число), 'gen' (года), 'prep' (году)."""
+    """Inflect a nominative-masculine ordinal stem into the requested form
+    (nom_m keeps the stem; other forms drop the -ый/-ой/-ий ending)."""
     if form == 'nom_m':
         return stem
-    if stem.endswith('ий'):  # третий -> третье / третьего / третьем
-        base = stem[:-2]
-        return base + {'nom_n': 'ье', 'gen': 'ьего', 'prep': 'ьем'}[form]
-    base = stem[:-2]  # drop -ый / -ой
-    return base + {'nom_n': 'ое', 'gen': 'ого', 'prep': 'ом'}[form]
+    soft = stem.endswith('ий')  # третий
+    return stem[:-2] + _ordinal_endings[form][1 if soft else 0]
 
 def number_to_ordinal_words(n, form='nom_m'):
     """Convert an integer to its ordinal words in Russian. Only the final
@@ -423,10 +427,24 @@ def normalize_decimals(text):
         return f"{' '.join(int_words)} {whole} и {' '.join(frac_words)} {place}"
     return re.sub(r'\b(\d+),(\d+)\b', repl, text)
 
+# Russian ordinal suffix (after a hyphen) -> grammatical form, e.g. "1-й" / "190-го" / "1950-х".
+_ordinal_suffix_form = {
+    'й': 'nom_m', 'го': 'gen', 'му': 'dat', 'м': 'prep',
+    'я': 'nom_f', 'ю': 'acc_f', 'е': 'nom_pl', 'х': 'pl',
+}
+_re_ordinal_suffix = re.compile(r'(\d+)[-–—](' + '|'.join(_ordinal_suffix_form) + r')\b')
+
+def normalize_ordinals(text):
+    """Expand explicit ordinals written with a grammatical suffix (1-й, 190-го, 1950-х)."""
+    def repl(m):
+        return number_to_ordinal_words(int(m.group(1)), _ordinal_suffix_form[m.group(2)])
+    return _re_ordinal_suffix.sub(repl, text)
+
 def normalize_russian(text):
     text = expand_abbreviations(text)
     text = normalize_symbols(text)
     text = normalize_dates(text)
+    text = normalize_ordinals(text)
     text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
