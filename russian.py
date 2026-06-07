@@ -291,51 +291,86 @@ def currency_normalization(text):
     # Run the detection and conversion on the input text
     return detect_currency(text)
 
-# Updated function to normalize dates in a given text with month names and ordinal days
+# Maps the last word of a cardinal number to its ordinal stem (nominative masculine).
+_cardinal_to_ordinal_stem = {
+    'один': 'первый', 'два': 'второй', 'две': 'второй', 'три': 'третий',
+    'четыре': 'четвёртый', 'пять': 'пятый', 'шесть': 'шестой', 'семь': 'седьмой',
+    'восемь': 'восьмой', 'девять': 'девятый', 'десять': 'десятый',
+    'одиннадцать': 'одиннадцатый', 'двенадцать': 'двенадцатый', 'тринадцать': 'тринадцатый',
+    'четырнадцать': 'четырнадцатый', 'пятнадцать': 'пятнадцатый', 'шестнадцать': 'шестнадцатый',
+    'семнадцать': 'семнадцатый', 'восемнадцать': 'восемнадцатый', 'девятнадцать': 'девятнадцатый',
+    'двадцать': 'двадцатый', 'тридцать': 'тридцатый', 'сорок': 'сороковой',
+    'пятьдесят': 'пятидесятый', 'шестьдесят': 'шестидесятый', 'семьдесят': 'семидесятый',
+    'восемьдесят': 'восьмидесятый', 'девяносто': 'девяностый',
+    'сто': 'сотый', 'двести': 'двухсотый', 'триста': 'трёхсотый', 'четыреста': 'четырёхсотый',
+    'пятьсот': 'пятисотый', 'шестьсот': 'шестисотый', 'семьсот': 'семисотый',
+    'восемьсот': 'восьмисотый', 'девятьсот': 'девятисотый',
+    'тысяча': 'тысячный', 'тысячи': 'тысячный', 'тысяч': 'тысячный',
+}
+# Genitive prefix for a count word standing before "тысячный" (e.g. две -> двух тысячный).
+_count_genitive_prefix = {
+    'две': 'двух', 'два': 'двух', 'три': 'трёх', 'четыре': 'четырёх', 'пять': 'пяти',
+    'шесть': 'шести', 'семь': 'семи', 'восемь': 'восьми', 'девять': 'девяти',
+}
+
+def _inflect_ordinal(stem, form):
+    """Inflect a nominative-masculine ordinal stem into the requested form.
+    form: 'nom_m' (год), 'nom_n' (день/число), 'gen' (года), 'prep' (году)."""
+    if form == 'nom_m':
+        return stem
+    if stem.endswith('ий'):  # третий -> третье / третьего / третьем
+        base = stem[:-2]
+        return base + {'nom_n': 'ье', 'gen': 'ьего', 'prep': 'ьем'}[form]
+    base = stem[:-2]  # drop -ый / -ой
+    return base + {'nom_n': 'ое', 'gen': 'ого', 'prep': 'ом'}[form]
+
+def number_to_ordinal_words(n, form='nom_m'):
+    """Convert an integer to its ordinal words in Russian. Only the final
+    component is ordinalized; preceding components stay cardinal."""
+    words = number_to_words(n).split()
+    last = words[-1]
+    if last in ('тысяча', 'тысячи', 'тысяч') and len(words) > 1 and words[-2] in _count_genitive_prefix:
+        # round thousands: "две тысячи" -> "двух тысячный" (2000 -> двухтысячный read split)
+        words[-2] = _count_genitive_prefix[words[-2]]
+    words[-1] = _inflect_ordinal(_cardinal_to_ordinal_stem.get(last, last), form)
+    return ' '.join(words)
+
+_MONTHS_GEN = ('января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля',
+               'августа', 'сентября', 'октября', 'ноября', 'декабря')
+_MONTH_BY_NUM = {f'{i:02d}': m for i, m in enumerate(_MONTHS_GEN, start=1)}
+_GOD_FORM = {'год': 'nom_m', 'года': 'gen', 'году': 'prep', 'годе': 'prep'}
+
+_re_date_numeric = re.compile(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b')
+_re_date_spelled = re.compile(
+    r'\b(\d{1,2})\s+(' + '|'.join(_MONTHS_GEN) + r')\s+(\d{3,4})(\s+года)?\b')
+_re_date_daymonth = re.compile(r'\b(\d{1,2})\s+(' + '|'.join(_MONTHS_GEN) + r')\b')
+_re_year_god = re.compile(r'\b(\d{1,4})\s+(год|года|году|годе)\b')
+
 def normalize_dates(text):
-    # Month names in Russian in the genitive case
-    month_names = {
-        '01': 'января', '02': 'февраля', '03': 'марта',
-        '04': 'апреля', '05': 'мая', '06': 'июня',
-        '07': 'июля', '08': 'августа', '09': 'сентября',
-        '10': 'октября', '11': 'ноября', '12': 'декабря'
-    }
+    """Normalize the rule-tractable date shapes: DD.MM.YYYY, "D month YYYY",
+    "D month", and "<year> год/года/году"."""
+    def numeric(m):
+        day, month, year = m.group(1), m.group(2), m.group(3)
+        mn = _MONTH_BY_NUM.get(f'{int(month):02d}')
+        if not mn:
+            return m.group(0)
+        return f"{number_to_ordinal_words(int(day), 'nom_n')} {mn} {number_to_ordinal_words(int(year), 'gen')} года"
 
-    # Regular expression for matching dates in DD.MM.YYYY format
-    date_pattern = re.compile(r'\b(\d{2})\.(\d{2})\.(\d{4})\b')
+    def spelled(m):
+        day, month, year = int(m.group(1)), m.group(2), int(m.group(3))
+        return f"{number_to_ordinal_words(day, 'gen')} {month} {number_to_ordinal_words(year, 'gen')} года"
 
-    # Function to normalize a single date
-    def normalize_date(match):
-        day, month, year = match.groups()
-        # Convert day to ordinal word and year to words
-        day_word = number_to_words_ordinal(int(day))
-        year_word = number_to_words(int(year))
-        # Use the month name from the mapping
-        month_name = month_names.get(month, '')
-        # Construct the normalized date string in the format "7 января 2021 года"
-        return f'{day_word} {month_name} {year_word} года'
-    
-    def number_to_words_ordinal(n):
-        """
-        Convert a number into its ordinal word components in Russian. This function is specific to days of the month,
-        where ordinal numbers are required.
-        """
-        # Russian ordinal numbers for days (1st to 31st) in the genitive case, which is used for dates
-        ordinal_days = {
-            1: 'первое', 2: 'второе', 3: 'третье', 4: 'четвёртое', 5: 'пятое',
-            6: 'шестое', 7: 'седьмое', 8: 'восьмое', 9: 'девятое', 10: 'десятое',
-            11: 'одиннадцатое', 12: 'двенадцатое', 13: 'тринадцатое', 14: 'четырнадцатое', 15: 'пятнадцатое',
-            16: 'шестнадцатое', 17: 'семнадцатое', 18: 'восемнадцатое', 19: 'девятнадцатое', 20: 'двадцатое',
-            21: 'двадцать первое', 22: 'двадцать второе', 23: 'двадцать третье', 24: 'двадцать четвёртое',
-            25: 'двадцать пятое', 26: 'двадцать шестое', 27: 'двадцать седьмое', 28: 'двадцать восьмое',
-            29: 'двадцать девятое', 30: 'тридцатое', 31: 'тридцать первое'
-        }
-        return ordinal_days.get(n, '')
+    def daymonth(m):
+        return f"{number_to_ordinal_words(int(m.group(1)), 'gen')} {m.group(2)}"
 
-    # Replace all found dates in the text with their normalized forms
-    normalized_text = date_pattern.sub(normalize_date, text)
+    def year_god(m):
+        return f"{number_to_ordinal_words(int(m.group(1)), _GOD_FORM[m.group(2)])} {m.group(2)}"
 
-    return normalized_text
+    text = _re_date_numeric.sub(numeric, text)
+    text = _re_date_spelled.sub(spelled, text)
+    text = _re_date_daymonth.sub(daymonth, text)
+    text = _re_year_god.sub(year_god, text)
+    return text
 
 def normalize_russian(text):
     text = expand_abbreviations(text)
