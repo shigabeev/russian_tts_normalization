@@ -18,7 +18,7 @@ print(normalized_text)
 ​Prints:
 
 ```
-У меня есть одна тысяча двести тридцать четыре доллара и пять тысяч шестьсот семьдесят восемь рублей. Кроме того, я должен девяносто евро пятьдесят евроцентов и взял в долг четыре тысячи триста двадцать один фунт.\nВ моем кошельке было восемьсот семьдесят шесть гривен и пятьсот сорок три рубля двадцать один копейка, а также я нашел 20 центов.
+У меня есть тысяча двести тридцать четыре доллара и пять тысяч шестьсот семьдесят восемь рублей. Кроме того, я должен девяносто евро пятьдесят евроцентов и взял в долг четыре тысячи триста двадцать один фунт.\nВ моем кошельке было восемьсот семьдесят шесть гривен и пятьсот сорок три рубля двадцать один копейка, а также я нашел двадцать центов.
 ```
 
 # Implemented 
@@ -27,13 +27,22 @@ print(normalized_text)
 3. Numbers conversion of any size
 4. Currency expansion
 5. Phone number expansion
-6. Date
+6. Dates: "1862 год", "12 февраля 2013", "05.08.2008" -> ordinal year/day reading
+7. Ordinals with a suffix: "1-й" -> "первый", "1950-х" -> "...пятидесятых"
+8. Decimals: "1,2" -> "одна целая и две десятых"
+9. Digit strings with a leading zero: "06" -> "ноль шесть"
+10. Symbols / foreign letters by name: "&" -> "и", "²" -> "в квадрате", Greek letters
 
-# Not implemented
-1. Time
-2. Percentages
-3. Short forms like "г." -> "город"
-3. Probably a lot more
+# Validation
+Tested against the Google/Kaggle Russian text-normalization set
+(`ru_train.csv`, 10.57M tokens): exact-match token error 27.0% -> 9.3%.
+Run `python3 test_russian.py` for the regression cases.
+
+# Not implemented (needs sentence context or a token classifier, not pure rules)
+1. Time, percentages, fractions
+2. Grammatical case agreement (e.g. "500 км" -> "пятисот километров")
+3. Disambiguating a bare number as cardinal vs. ordinal vs. year
+4. Short forms like "г." -> "город"
 
 # Acknowledgements
 I want to thank OpenAI's ChatGPT for writing this code. I would've never been able to write it myself since I'm too lazy for that.
