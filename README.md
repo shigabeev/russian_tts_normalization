@@ -94,14 +94,24 @@ python3 clean_dataset.py ru_train.csv ru_2026.csv   # ~10% of rows cleaned
 python3 clean_dataset.py --selftest
 ```
 
-It is a strict deletion of the artifacts and **introduces no new content**: every
-row is checked so that the cleaned field equals the original with only the marker
-words and `sil` removed (it aborts if that ever fails), and output quoting matches
-the source so a diff shows only the intended changes. It does NOT re-spell or
-re-normalize anything — foreign words spelled out letter by letter in the gold
-stay spelled (turning them into natural words needs a model, e.g.
-[RUNorm](https://github.com/Den4ikAI/runorm), which can introduce errors and so
-is left as an opt-in, review-required step).
+`sil` becomes an explicit, unmissable pause marker `<p>` (e.g.
+`девятьсот семьдесят восемь <p> пять`). It is a strict deletion of the artifacts
+and **introduces no new content**: every row is checked so that the cleaned field
+(minus the inserted `<p>`) equals the original with only the marker words and
+`sil` removed — it aborts if that ever fails — and output quoting matches the
+source so a diff shows only the intended changes. It does NOT re-spell or
+re-normalize anything; foreign words spelled out letter by letter in the gold
+stay spelled.
+
+### Optional: naturalising foreign words (`runorm_pass.py`)
+Turning `Tiberius` -> `тибериус` needs a model, which can err, so it is kept
+strictly separate and **review-only**. `runorm_pass.py` runs
+[RUNorm](https://github.com/Den4ikAI/runorm) over the Latin-script rows and writes
+a side-by-side file (`before, after_gold_clean, after_runorm, differs`) — it never
+touches the gold. In review, RUNorm is good on substantial words
+(`Paleontology` -> `палеонтолоджи`, `iPhone` -> `айфон`) but unreliable on short /
+function tokens (drops `the`, mis-spells `next`, occasionally hallucinates), so its
+output must be accepted per row, not in bulk. Needs `pip install runorm` in a venv.
 
 # Not implemented (needs sentence context or a token classifier, not pure rules)
 1. HH:MM:SS times

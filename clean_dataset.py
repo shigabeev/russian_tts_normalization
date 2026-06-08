@@ -6,13 +6,13 @@ should contain:
     (`э_trans л_trans` is "Elvis" spelled out); the marker is dropped, the
     letter it is attached to is kept.
   * `sil` — a silence/pause token (punctuation, and separators in phone/ISBN
-    numbers); rendered as a comma (a phrase break).
+    numbers); kept but rendered as an explicit, unmissable pause marker `<p>`.
 
 This is a STRICT, deterministic transformation: it only deletes the marker
-words and maps `sil` -> ",". It never rewrites, re-spells, or re-normalizes
-anything, so it cannot introduce new mistakes. `--verify` proves this by
-checking that the alphanumeric content of every cleaned field equals the
-original with exactly the marker words and `sil` removed.
+words and maps `sil` -> "<p>". It never rewrites, re-spells, or re-normalizes
+anything, so it cannot introduce new mistakes. Every row is checked so that its
+cleaned content (minus the inserted `<p>` markers) equals the original with the
+marker words and `sil` removed; the run aborts if that ever fails.
 
 For genuinely naturalising the ~5% of foreign-word rows (e.g. an URL spelled
 letter by letter), regenerate from the `before` column with a normalizer — but
@@ -35,14 +35,14 @@ _MARKER_RE = re.compile(r'_(?:trans|latin|letter)\b')
 _SIL_RE = re.compile(r'(?<!\S)sil(?!\S)')
 
 
+PAUSE = '<p>'  # explicit, unmissable pause marker that replaces `sil`
+
 def clean(text):
-    """Remove verbatim markers and render `sil` as a comma. Deterministic."""
+    """Remove verbatim markers and render `sil` as an explicit pause. Deterministic."""
     text = _MARKER_RE.sub('', text)
-    text = _SIL_RE.sub(',', text)
-    text = re.sub(r'\s+([,])', r'\1', text)   # " ," -> ","
-    text = re.sub(r',(?=,)', '', text)        # collapse ",,"
+    text = _SIL_RE.sub(PAUSE, text)
     text = re.sub(r'\s{2,}', ' ', text)       # collapse runs of spaces
-    return text.strip().strip(',').strip()
+    return text.strip()
 
 
 def _content(text):
@@ -58,8 +58,9 @@ def _content_after_removal(text):
 
 
 def verify_row(original):
-    """Return True iff clean() changed nothing except the artifacts."""
-    return _content(clean(original)) == _content_after_removal(original)
+    """True iff clean() changed nothing but the artifacts: its content, minus the
+    inserted pause markers, must equal the original minus markers and `sil`."""
+    return _content(clean(original).replace(PAUSE, ' ')) == _content_after_removal(original)
 
 
 def selftest():
@@ -67,8 +68,8 @@ def selftest():
         ('э_trans л_trans в_trans и_trans с_trans', 'э л в и с'),
         ('t h g точка р_trans у_trans', 't h g точка р у'),
         ('девятьсот семьдесят восемь sil пять sil три',
-         'девятьсот семьдесят восемь, пять, три'),
-        ('ноль sil восемьсот семьдесят семь', 'ноль, восемьсот семьдесят семь'),
+         'девятьсот семьдесят восемь <p> пять <p> три'),
+        ('ноль sil восемьсот семьдесят семь', 'ноль <p> восемьсот семьдесят семь'),
         ('Москва', 'Москва'),                       # untouched
         ('тысяча восемьсот шестьдесят второй год',   # untouched
          'тысяча восемьсот шестьдесят второй год'),
