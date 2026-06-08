@@ -83,6 +83,26 @@ acronyms as words, nominative Roman numerals) favour TTS quality over this score
 
 Run `python3 test_russian.py` for the regression cases.
 
+## Cleaning the reference set (`clean_dataset.py`)
+The Google/Kestrel gold contains annotation artifacts that no TTS target should
+carry: `_trans`/`_latin`/`_letter` per-letter spelling markers and `sil` pause
+tokens. `clean_dataset.py` removes them deterministically (markers dropped,
+`sil` -> ","), producing a cleaner reference:
+
+```
+python3 clean_dataset.py ru_train.csv ru_2026.csv   # ~10% of rows cleaned
+python3 clean_dataset.py --selftest
+```
+
+It is a strict deletion of the artifacts and **introduces no new content**: every
+row is checked so that the cleaned field equals the original with only the marker
+words and `sil` removed (it aborts if that ever fails), and output quoting matches
+the source so a diff shows only the intended changes. It does NOT re-spell or
+re-normalize anything — foreign words spelled out letter by letter in the gold
+stay spelled (turning them into natural words needs a model, e.g.
+[RUNorm](https://github.com/Den4ikAI/runorm), which can introduce errors and so
+is left as an opt-in, review-required step).
+
 # Not implemented (needs sentence context or a token classifier, not pure rules)
 1. HH:MM:SS times
 2. Grammatical case agreement (e.g. "500 км" -> "пятисот километров"; oblique decimals)
