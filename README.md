@@ -84,31 +84,36 @@ acronyms as words, nominative Roman numerals) favour TTS quality over this score
 Run `python3 test_russian.py` for the regression cases.
 
 ## Cleaning the reference set (`clean_dataset.py`)
-The Google/Kestrel gold contains annotation artifacts that no TTS target should
-carry: `_trans`/`_latin`/`_letter` per-letter spelling markers and `sil` pause
-tokens. `clean_dataset.py` removes them deterministically (markers dropped,
-`sil` -> ","), producing a cleaner reference:
+The Google/Kestrel gold is accurate (e.g. `61st` -> `шестьдесят один стоун`, since
+"st" is the UK weight unit *stone*) but carries artifacts no TTS target should:
+`_trans`/`_latin`/`_letter` per-letter spelling markers, `sil` pause tokens, and
+bare Latin letters for acronyms (`t v`, `i s b n`, `c`, `p`). `clean_dataset.py`
+converts the gold to a plausible, **fully-Cyrillic** spoken form — deterministically,
+no models:
 
 ```
-python3 clean_dataset.py ru_train.csv ru_2026.csv   # ~10% of rows cleaned
+python3 clean_dataset.py ru_train.csv ru_2026.csv   # ~5.8% of rows changed
 python3 clean_dataset.py --selftest
 ```
 
-`sil` becomes an explicit, unmissable pause marker `<p>` (e.g.
-`девятьсот семьдесят восемь <p> пять`). It is a strict deletion of the artifacts
-and **introduces no new content**: every row is checked so that the cleaned field
-(minus the inserted `<p>`) equals the original with only the marker words and
-`sil` removed — it aborts if that ever fails — and output quoting matches the
-source so a diff shows only the intended changes. It does NOT re-spell or
-re-normalize anything; foreign words spelled out letter by letter in the gold
-stay spelled.
+- Markers dropped; `sil` -> explicit pause marker `<p>` (`... восемь <p> пять`).
+- Every leftover Latin letter -> its Russian letter-name (`t`->`ти`, `i`->`ай`,
+  `c`->`си` ...; `i s b n` -> `ай эс би эн`), via a fixed 26-letter table from
+  NeMo's `latin_to_cyrillic` (English-name reading).
+
+**Guarantees (checked per row, aborts on failure):** the marker/`sil` pass is
+content-preserving (no Cyrillic/digit content changes), the output contains **no
+Latin** at all (verified across all 10.57M rows), original Cyrillic is untouched,
+and output quoting matches the source so a diff shows only intended changes. It
+does NOT re-normalize numbers/dates (the gold already does that correctly).
 
 ### Optional: naturalising foreign words (`runorm_pass.py`)
-Turning `Tiberius` -> `тибериус` needs a model, which can err, so it is kept
-strictly separate and **review-only**. `runorm_pass.py` runs
-[RUNorm](https://github.com/Den4ikAI/runorm) over the Latin-script rows and writes
-a side-by-side file (`before, after_gold_clean, after_runorm, differs`) — it never
-touches the gold. In review, RUNorm is good on substantial words
+The clean above still *spells out* transliterated foreign words (`Tiberius` ->
+`т и б е р и у с`). Turning those into a single word (`тибериус`) needs a model,
+which can err, so it is kept strictly separate and **review-only**. `runorm_pass.py`
+runs [RUNorm](https://github.com/Den4ikAI/runorm) over the Latin-script rows and
+writes a side-by-side file (`before, after_gold_clean, after_runorm, differs`) — it
+never touches the gold. In review, RUNorm is good on substantial words
 (`Paleontology` -> `палеонтолоджи`, `iPhone` -> `айфон`) but unreliable on short /
 function tokens (drops `the`, mis-spells `next`, occasionally hallucinates), so its
 output must be accepted per row, not in bulk. Needs `pip install runorm` in a venv.

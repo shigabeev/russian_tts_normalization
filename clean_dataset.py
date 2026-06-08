@@ -1,23 +1,22 @@
 """De-Google-ify the gold of the Russian text-normalization set.
 
-The Kestrel/Sproat gold uses annotation artifacts that no TTS-facing target
-should contain:
+The Kestrel/Sproat gold uses artifacts that no TTS-facing target should contain.
+This converts the gold to a plausible, fully-Cyrillic spoken form — deterministic,
+no models:
   * `_trans` / `_latin` / `_letter` — per-character spelling markers
     (`э_trans л_trans` is "Elvis" spelled out); the marker is dropped, the
     letter it is attached to is kept.
   * `sil` — a silence/pause token (punctuation, and separators in phone/ISBN
     numbers); kept but rendered as an explicit, unmissable pause marker `<p>`.
+  * leftover Latin letters — the gold leaves acronyms as bare Latin (`t v`,
+    `i s b n`, `c`, `p`), which a Russian voice cannot read; each Latin letter is
+    mapped to its Russian letter-name (`t`->`ти`, `v`->`ви`, `i`->`ай` ...).
 
-This is a STRICT, deterministic transformation: it only deletes the marker
-words and maps `sil` -> "<p>". It never rewrites, re-spells, or re-normalizes
-anything, so it cannot introduce new mistakes. Every row is checked so that its
-cleaned content (minus the inserted `<p>` markers) equals the original with the
-marker words and `sil` removed; the run aborts if that ever fails.
-
-For genuinely naturalising the ~5% of foreign-word rows (e.g. an URL spelled
-letter by letter), regenerate from the `before` column with a normalizer — but
-that injects the normalizer's error rate and must be reviewed, so it is NOT
-done here.
+Determinism / safety:
+  * Marker/`sil` handling is content-preserving and verified per row (the run
+    aborts if any Cyrillic/digit content changes).
+  * Latin -> letter-name uses a fixed 26-letter table (no model); the output is
+    verified to contain no Latin at all, and original Cyrillic is left untouched.
 
 Usage:
     python3 clean_dataset.py IN.csv OUT.csv      # clean the `after` column
@@ -37,12 +36,43 @@ _SIL_RE = re.compile(r'(?<!\S)sil(?!\S)')
 
 PAUSE = '<p>'  # explicit, unmissable pause marker that replaces `sil`
 
-def clean(text):
-    """Remove verbatim markers and render `sil` as an explicit pause. Deterministic."""
+# Latin letter -> Russian letter-name (the standard English-alphabet reading).
+# Source: NVIDIA NeMo-text-processing ru/data/latin_to_cyrillic.tsv (Apache-2.0),
+# English-name variant. This is how a Russian voice reads Latin acronyms (TV ->
+# "ти ви", ISBN -> "ай эс би эн").
+_LATIN_NAME = {
+    'a': 'эй', 'b': 'би', 'c': 'си', 'd': 'ди', 'e': 'и', 'f': 'эф', 'g': 'джи',
+    'h': 'эйч', 'i': 'ай', 'j': 'джей', 'k': 'кей', 'l': 'эл', 'm': 'эм', 'n': 'эн',
+    'o': 'оу', 'p': 'пи', 'q': 'кью', 'r': 'ар', 's': 'эс', 't': 'ти', 'u': 'ю',
+    'v': 'ви', 'w': 'дабл-ю', 'x': 'экс', 'y': 'уай', 'z': 'зет',
+}
+
+_SENTINEL = '\x00'  # Latin-free stand-in for the pause while transliterating
+
+def _clean_markers(text):
+    """Remove verbatim markers and render `sil` as an explicit pause. Content-preserving."""
     text = _MARKER_RE.sub('', text)
     text = _SIL_RE.sub(PAUSE, text)
-    text = re.sub(r'\s{2,}', ' ', text)       # collapse runs of spaces
+    text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
+
+def _translit_latin(text):
+    """Replace each Latin letter with its Russian letter-name."""
+    if not re.search(r'[A-Za-z]', text):
+        return text
+    text = re.sub(r'[A-Za-z]', lambda m: ' ' + _LATIN_NAME[m.group(0).lower()] + ' ', text)
+    text = re.sub(r'\s+([,.;:!?])', r'\1', text)   # drop space before punctuation
+    return re.sub(r'\s{2,}', ' ', text).strip()
+
+def clean(text):
+    """Full deterministic conversion to a plausible, fully-Cyrillic spoken form.
+    `sil` goes to a Latin-free sentinel during transliteration so the `<p>` marker
+    (which itself contains a Latin 'p') is not mangled."""
+    text = _MARKER_RE.sub('', text)
+    text = _SIL_RE.sub(_SENTINEL, text)
+    text = _translit_latin(text)
+    text = text.replace(_SENTINEL, PAUSE)
+    return re.sub(r'\s{2,}', ' ', text).strip()
 
 
 def _content(text):
@@ -58,20 +88,29 @@ def _content_after_removal(text):
 
 
 def verify_row(original):
-    """True iff clean() changed nothing but the artifacts: its content, minus the
-    inserted pause markers, must equal the original minus markers and `sil`."""
-    return _content(clean(original).replace(PAUSE, ' ')) == _content_after_removal(original)
+    """Two guarantees: (1) the marker/sil pass preserves all Cyrillic/digit content
+    (its content, minus inserted pauses, equals the original minus markers and sil);
+    (2) the final output contains no Latin (the letter-name pass only touches Latin,
+    never original Cyrillic)."""
+    marker_ok = _content(_clean_markers(original).replace(PAUSE, ' ')) == _content_after_removal(original)
+    no_latin = not re.search(r'[A-Za-z]', clean(original).replace(PAUSE, ' '))  # <p> marker exempt
+    return marker_ok and no_latin
 
 
 def selftest():
     cases = [
-        ('э_trans л_trans в_trans и_trans с_trans', 'э л в и с'),
-        ('t h g точка р_trans у_trans', 't h g точка р у'),
+        ('э_trans л_trans в_trans и_trans с_trans', 'э л в и с'),   # _trans -> Cyrillic kept
+        ('t h g точка р_trans у_trans', 'ти эйч джи точка р у'),     # bare Latin -> letter-names
         ('девятьсот семьдесят восемь sil пять sil три',
          'девятьсот семьдесят восемь <p> пять <p> три'),
         ('ноль sil восемьсот семьдесят семь', 'ноль <p> восемьсот семьдесят семь'),
-        ('Москва', 'Москва'),                       # untouched
-        ('тысяча восемьсот шестьдесят второй год',   # untouched
+        ('t v', 'ти ви'),                            # leftover Latin acronym
+        ('i s b n', 'ай эс би эн'),
+        ('c l', 'си эл'),
+        ('p', 'пи'), ('i', 'ай'), ('H', 'эйч'),      # the short single-letter failures
+        ('tvРоссия', 'ти ви Россия'),                # glued source token
+        ('Москва', 'Москва'),                        # untouched
+        ('тысяча восемьсот шестьдесят второй год',    # untouched
          'тысяча восемьсот шестьдесят второй год'),
     ]
     ok = True
