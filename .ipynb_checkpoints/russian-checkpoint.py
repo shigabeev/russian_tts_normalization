@@ -1,215 +1,22 @@
 import re
+import os
 
-# ---- Embedded vocabularies (kept in-file so the module is a single file) -------
-
-_ABBREVIATIONS_TSV = """\
-# Russian textual abbreviations -> spoken form.
-# Source: NVIDIA NeMo-text-processing, ru/data/whitelist.tsv (Apache-2.0)
-#   https://github.com/NVIDIA/NeMo-text-processing
-# Format: <abbreviation><TAB><expansion>   (lines starting with # are ignored).
-# Matching is case-insensitive and tolerant of spaces after the dots.
-#
-# Only entries with a single, context-independent expansion are kept. NeMo's
-# whitelist resolves the rest by context (a WFST), which a deterministic rule
-# engine cannot do, so these are intentionally omitted:
-#   г. (год/году/года/город), кв. (квартира/квартал), ЖК (5 senses),
-#   комн./эт. (adjective agreement), экз. (count agreement).
-гг.	годы
-р-н	район
-до н. э.	до нашей эры
-н. э.	нашей эры
-см. также	смотри также
-с.ш.	северной широты
-ю.ш.	южной широты
-в.д.	восточной долготы
-з.д.	западной долготы
-и т. д.	и так далее
-и т. п.	и тому подобное
-б/у	бывший в употреблении
-и др.	и другие
-и пр.	и прочие
-т.е.	то есть
-"""
-
-_MEASUREMENTS_TSV = """\
-# Units of measurement -> spoken form, with count agreement.
-# Abbreviation inventory informed by NVIDIA NeMo-text-processing
-#   (ru/data/measurements.tsv, Apache-2.0). Forms here are standard Russian
-#   declensions written/checked by hand, because NeMo's own forms contain
-#   spelling errors (e.g. it lists "кг" as "килограм"/"килограмов", one м).
-#
-# Format: <abbr><TAB><one><TAB><few (2-4)><TAB><many (5+, 0, 11-14)><TAB><gender m|f>
-#   one  -> "1 X"  (один/одна X)        few -> "2-4 X"  (два/две X)
-#   many -> "5+ X" (пять X)             gender selects один/одна, два/две for the numeral
-# Matching is case-sensitive (км != КМ, Вт != вт) and requires a number before the unit.
-# Ambiguous one-letter abbreviations (г=грамм/год, т=тонна/том, с=секунда/предлог) are omitted.
-#
-# length
-км	километр	километра	километров	m
-м	метр	метра	метров	m
-см	сантиметр	сантиметра	сантиметров	m
-мм	миллиметр	миллиметра	миллиметров	m
-дм	дециметр	дециметра	дециметров	m
-# mass
-кг	килограмм	килограмма	килограммов	m
-мг	миллиграмм	миллиграмма	миллиграммов	m
-# volume
-л	литр	литра	литров	m
-мл	миллилитр	миллилитра	миллилитров	m
-# time
-ч	час	часа	часов	m
-мин	минута	минуты	минут	f
-сек	секунда	секунды	секунд	f
-# area / volume
-га	гектар	гектара	гектаров	m
-м²	квадратный метр	квадратных метра	квадратных метров	m
-м2	квадратный метр	квадратных метра	квадратных метров	m
-км²	квадратный километр	квадратных километра	квадратных километров	m
-км2	квадратный километр	квадратных километра	квадратных километров	m
-см²	квадратный сантиметр	квадратных сантиметра	квадратных сантиметров	m
-м³	кубический метр	кубических метра	кубических метров	m
-м3	кубический метр	кубических метра	кубических метров	m
-# speed
-км/ч	километр в час	километра в час	километров в час	m
-м/с	метр в секунду	метра в секунду	метров в секунду	m
-# frequency
-Гц	герц	герца	герц	m
-кГц	килогерц	килогерца	килогерц	m
-МГц	мегагерц	мегагерца	мегагерц	m
-ГГц	гигагерц	гигагерца	гигагерц	m
-# power / electricity
-Вт	ватт	ватта	ватт	m
-кВт	киловатт	киловатта	киловатт	m
-МВт	мегаватт	мегаватта	мегаватт	m
-В	вольт	вольта	вольт	m
-кВ	киловольт	киловольта	киловольт	m
-А	ампер	ампера	ампер	m
-мА	миллиампер	миллиампера	миллиампер	m
-Ом	ом	ома	ом	m
-# data
-бит	бит	бита	бит	m
-байт	байт	байта	байт	m
-КБ	килобайт	килобайта	килобайт	m
-МБ	мегабайт	мегабайта	мегабайт	m
-ГБ	гигабайт	гигабайта	гигабайт	m
-ТБ	терабайт	терабайта	терабайт	m
-# temperature (degrees; °C / °F handled separately)
-°	градус	градуса	градусов	m
-# dotted unit abbreviations (Kaggle gold convention: 82 т. -> тонны, 351 с. -> секунды;
-# the dot disambiguates these from the bare letters omitted above)
-т.	тонна	тонны	тонн	f
-с.	секунда	секунды	секунд	f
-мин.	минута	минуты	минут	f
-ч.	час	часа	часов	m
-"""
-
-_ENGLISH_TSV = """\
-# Frequent English words / brand names -> conventional Russian rendering.
-# Lookup is case-insensitive on whole Latin words; anything not listed falls
-# through to letter-name spelling (acronyms) or transliteration.
-# Format: <word><TAB><cyrillic>
-the	зе
-one	уан
-two	ту
-google	гугл
-python	питон
-ios	айос
-iphone	айфон
-ipad	айпад
-windows	виндоус
-microsoft	майкрософт
-apple	эппл
-facebook	фейсбук
-youtube	ютуб
-twitter	твиттер
-instagram	инстаграм
-telegram	телеграм
-whatsapp	вотсап
-skype	скайп
-android	андроид
-samsung	самсунг
-intel	интел
-linux	линукс
-internet	интернет
-online	онлайн
-email	имейл
-news	ньюс
-ok	окей
-"""
-
-_YO_TSV = """\
-# ё restoration: words whose е-spelling unambiguously stands for ё.
-# Only unambiguous forms are listed (no звезды/все/вышел-type homographs).
-# Format: <е-spelling><TAB><ё-spelling>; matching is word-bounded,
-# the capitalization of the first letter is preserved.
-еще	ещё
-ее	её
-нее	неё
-елка	ёлка
-елки	ёлки
-елку	ёлку
-елке	ёлке
-елкой	ёлкой
-зеленый	зелёный
-зеленая	зелёная
-зеленое	зелёное
-зеленые	зелёные
-желтый	жёлтый
-желтая	жёлтая
-желтое	жёлтое
-желтые	жёлтые
-черный	чёрный
-черная	чёрная
-черное	чёрное
-черные	чёрные
-легкий	лёгкий
-легкая	лёгкая
-легкое	лёгкое
-легкие	лёгкие
-тяжелый	тяжёлый
-тяжелая	тяжёлая
-тяжелое	тяжёлое
-тяжелые	тяжёлые
-теплый	тёплый
-теплая	тёплая
-теплое	тёплое
-теплые	тёплые
-твердый	твёрдый
-серьезный	серьёзный
-серьезно	серьёзно
-определенно	определённо
-лед	лёд
-идет	идёт
-придет	придёт
-пойдет	пойдёт
-найдет	найдёт
-поймет	поймёт
-начнет	начнёт
-дает	даёт
-остается	остаётся
-шел	шёл
-пошел	пошёл
-пришел	пришёл
-ушел	ушёл
-нашел	нашёл
-подошел	подошёл
-произошел	произошёл
-вперед	вперёд
-полет	полёт
-самолет	самолёт
-самолета	самолёта
-отчет	отчёт
-счет	счёт
-учет	учёт
-расчет	расчёт
-"""
+# ---- Vocabulary files (data/) -------------------------------------------------
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 def _read_lines(name):
-    """Yield non-empty, non-comment, stripped lines from an embedded vocabulary."""
-    for line in globals()[f'_{name.upper()}_TSV'].splitlines():
-        line = line.strip()
-        if line and not line.startswith('#'):
-            yield line
+    """Yield non-empty, non-comment, stripped lines from a data file."""
+    try:
+        with open(os.path.join(_DATA_DIR, name), encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    yield line
+    except FileNotFoundError:
+        return
+
+def _load_set(name):
+    return {line.upper() for line in _read_lines(name)}
 
 # Updated mapping dictionary with common digraphs
 cyrrilization_mapping_extended = {
@@ -238,11 +45,11 @@ pronunciation_map = {
     'Э': 'э', 'Ю': 'ю', 'Я': 'я'
 }
 
-# ---- Textual abbreviations ----------------------------------------------------
+# ---- Textual abbreviations (data/abbreviations.txt) ---------------------------
 def _load_abbreviations():
     """Return (compiled_regex, {canonical_key: expansion})."""
     mapping = {}
-    for line in _read_lines('abbreviations'):
+    for line in _read_lines('abbreviations.txt'):
         if '\t' not in line:
             continue
         key, value = line.split('\t', 1)
@@ -255,7 +62,7 @@ def _load_abbreviations():
         for ch in key:
             out += r'\.\s*' if ch == '.' else (r'\s*' if ch == ' ' else re.escape(ch))
         return out
-    keys = sorted({line.split('\t', 1)[0] for line in _read_lines('abbreviations') if '\t' in line},
+    keys = sorted({line.split('\t', 1)[0] for line in _read_lines('abbreviations.txt') if '\t' in line},
                   key=len, reverse=True)
     pattern = r'(?<![А-Яа-яёЁ])(?:' + '|'.join(to_pattern(k) for k in keys) + r')(?![А-Яа-яёЁ])'
     return re.compile(pattern, re.IGNORECASE), mapping
@@ -285,13 +92,12 @@ def _spell_letters(token):
 
 def expand_abbreviations(text):
     """Read all-caps Cyrillic acronyms: vowel-less runs (СССР) are spelled out,
-    pronounceable ones (НАТО) and emphasised words (ВАЖНО) are kept as-is
-    (case carries no spoken information, and the gold set preserves it)."""
+    pronounceable ones (НАТО) and emphasised words (ВАЖНО) are lowercased."""
     def repl(m):
         token = m.group(0)
         if not (set(token.upper()) & _RU_VOWELS):
             return _spell_letters(token.upper())
-        return token
+        return token.lower()
     return re.sub(r'\b[А-ЯЁ]{2,}\b', repl, text)
 
 
@@ -523,14 +329,12 @@ def currency_normalization(text):
         return full_currency_words
 
     # Define currency patterns for detection
-    # (?![а-яё]) keeps word forms from matching inside longer words
-    # (e.g. "рубля" inside "рублями", which the instrumental rule handles).
     currency_patterns = {
-        'rub': [r'(\d+(?:\.\d\d)?)\s*(руб(л(ей|я|ь))?(?![а-яё])|₽)', r'(\d+(?:\.\d\d)?)\s*RUB'],
-        'usd': [r'(\d+(?:\.\d\d)?)\s*(доллар(ов|а|ы)?(?![а-яё])|\$)', r'(\d+(?:\.\d\d)?)\s*USD', r'\$(\d+(?:\.\d\d)?)'],
-        'eur': [r'(\d+(?:\.\d\d)?)\s*(евро(?![а-яё])|€)', r'(\d+(?:\.\d\d)?)\s*EUR', r'(\d+)\s*€'],
-        'gbp': [r'(\d+(?:\.\d\d)?)\s*(фунт(ов|а|ы)?(?![а-яё])|£)', r'(\d+(?:\.\d\d)?)\s*GBP', r'£(\d+)'],
-        'uah': [r'(\d+(?:\.\d\d)?)\s*(грив(ен|ны|на)(?![а-яё])|₴)', r'(\d+(?:\.\d\d)?)\s*UAH', r'(\d+)\s*₴'],
+        'rub': [r'(\d+(?:\.\d\d)?)\s*(руб(л(ей|я|ь))?|₽)', r'(\d+(?:\.\d\d)?)\s*RUB'],
+        'usd': [r'(\d+(?:\.\d\d)?)\s*(доллар(ов|а|ы)?|\$)', r'(\d+(?:\.\d\d)?)\s*USD', r'\$(\d+(?:\.\d\d)?)'],
+        'eur': [r'(\d+(?:\.\d\d)?)\s*(евро|€)', r'(\d+(?:\.\d\d)?)\s*EUR', r'(\d+)\s*€'],
+        'gbp': [r'(\d+(?:\.\d\d)?)\s*(фунт(ов|а|ы)?|£)', r'(\d+(?:\.\d\d)?)\s*GBP', r'£(\d+)'],
+        'uah': [r'(\d+(?:\.\d\d)?)\s*(грив(ен|ны|на)|₴)', r'(\d+(?:\.\d\d)?)\s*UAH', r'(\d+)\s*₴'],
     }
 
     # Detect and convert currencies in the text
@@ -606,11 +410,9 @@ _GOD_FORM = {'год': 'nom_m', 'года': 'gen', 'году': 'prep', 'годе
 
 _re_date_numeric = re.compile(r'\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b')
 _re_date_spelled = re.compile(
-    r'\b(\d{1,2})\s+(' + '|'.join(_MONTHS_GEN) + r')\s+(\d{3,4})(?:\s+года\b|\s*г\.(?![а-яё]))?')
+    r'\b(\d{1,2})\s+(' + '|'.join(_MONTHS_GEN) + r')\s+(\d{3,4})(\s+года)?\b')
 _re_date_daymonth = re.compile(r'\b(\d{1,2})\s+(' + '|'.join(_MONTHS_GEN) + r')\b')
 _re_year_god = re.compile(r'\b(\d{1,4})\s+(год|года|году|годе)\b')
-# "2008 г." -> ordinal year + год (nominative default; "г." = город never follows digits)
-_re_year_g = re.compile(r'\b(\d{3,4})\s*г\.(?![а-яё])')
 
 def normalize_dates(text):
     """Normalize the rule-tractable date shapes: DD.MM.YYYY, "D month YYYY",
@@ -632,17 +434,10 @@ def normalize_dates(text):
     def year_god(m):
         return f"{number_to_ordinal_words(int(m.group(1)), _GOD_FORM[m.group(2)])} {m.group(2)}"
 
-    def year_g(m):
-        y = int(m.group(1))
-        if not 900 <= y <= 2199:
-            return m.group(0)
-        return f"{number_to_ordinal_words(y, 'nom_m')} год"
-
     text = _re_date_numeric.sub(numeric, text)
     text = _re_date_spelled.sub(spelled, text)
     text = _re_date_daymonth.sub(daymonth, text)
     text = _re_year_god.sub(year_god, text)
-    text = _re_year_g.sub(year_g, text)
     return text
 
 # Standalone symbols and non-Russian letters spoken by name.
@@ -653,7 +448,6 @@ _symbol_map = {
     '≤': 'меньше или равно', '≥': 'больше или равно', '×': 'умножить на',
     '÷': 'разделить на', '=': 'равно', '<': 'меньше', '>': 'больше',
     '‰': 'промилле', '§': 'параграф', '₿': 'биткоин', '•': ' ', '·': ' ',
-    '~': 'тильда',
     '&': 'и', '#': 'решетка', '_': 'нижнее подчеркивание',
     '²': 'в квадрате', '³': 'в кубе', '№': 'номер',
     # Cyrillic letters outside the Russian alphabet
@@ -747,44 +541,18 @@ def _plural(n, forms):
         return forms[1]
     return forms[2]
 
-# Clock times: HH:MM, HH:MM:SS and English 2PM / 8pm forms.
+# HH:MM clock times (not HH:MM:SS, which the dataset leaves untouched).
 _re_time = re.compile(r'(?<![\d:])(\d{1,2}):([0-5]\d)(?![\d:])')
-_re_time_hms = re.compile(r'(?<![\d:])(\d{1,2}):([0-5]\d):([0-5]\d)(?![\d:])')
-_re_time_ampm = re.compile(r'\b(\d{1,2})\s*([APap])\.?\s*[Mm]\.?(?![A-Za-zа-яё])')
-
-def _hours_words(h):
-    return f"{number_to_words(h)} {_plural(h, ('час', 'часа', 'часов'))}"
-
-def _minutes_words(mn, forms=('минута', 'минуты', 'минут')):
-    return f"{' '.join(_feminine_last(number_to_words(mn).split()))} {_plural(mn, forms)}"
 
 def normalize_time(text):
-    """Read clock times: 06:06 -> 'шесть часов шесть минут', 07:00 -> 'семь часов',
-    02:25:00 -> '... ноль секунд', 2PM -> 'два часа дня'."""
-    def hms(m):
-        h, mn, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return (f"{_hours_words(h)} {_minutes_words(mn)} "
-                f"{_minutes_words(s, ('секунда', 'секунды', 'секунд'))}")
-
-    def ampm(m):
-        h = int(m.group(1))
-        if not 1 <= h <= 12:
-            return m.group(0)
-        if m.group(2).lower() == 'p':
-            part = 'дня' if h < 6 or h == 12 else 'вечера'
-        else:
-            part = 'ночи' if h < 5 or h == 12 else 'утра'
-        return f"{_hours_words(h)} {part}"
-
+    """Read HH:MM clock times: 06:06 -> 'шесть часов шесть минут', 07:00 -> 'семь часов'."""
     def repl(m):
         h, mn = int(m.group(1)), int(m.group(2))
-        out = _hours_words(h)
+        out = f"{number_to_words(h)} {_plural(h, ('час', 'часа', 'часов'))}"
         if mn:
-            out += ' ' + _minutes_words(mn)
+            mins = _feminine_last(number_to_words(mn).split())
+            out += f" {' '.join(mins)} {_plural(mn, ('минута', 'минуты', 'минут'))}"
         return out
-
-    text = _re_time_hms.sub(hms, text)
-    text = _re_time_ampm.sub(ampm, text)
     return _re_time.sub(repl, text)
 
 # Simple fractions a/b -> numerator (feminine) + denominator as a genitive-plural ordinal.
@@ -823,8 +591,7 @@ def normalize_web(text):
             s = s.replace(sym, word)
         return re.sub(r' {2,}', ' ', s).strip()
     text = _re_email.sub(spell, text)
-    text = _re_url.sub(spell, text)
-    return re.sub(r'#([A-Za-zА-Яа-яёЁ0-9_]+)', r'хештег \1', text)
+    return _re_url.sub(spell, text)
 
 # ---- Number pre-processing ----------------------------------------------------
 def normalize_number_groups(text):
@@ -843,19 +610,12 @@ _multipliers = {
     'млрд': (['миллиард', 'миллиарда', 'миллиардов'], False),
     'трлн': (['триллион', 'триллиона', 'триллионов'], False),
 }
-_re_multiplier = re.compile(r'\b(\d+(?:,\d+)?)\s*(тыс|млн|млрд|трлн)\.?(?![а-яё])', re.I)
+_re_multiplier = re.compile(r'\b(\d+)\s*(тыс|млн|млрд|трлн)\.?(?![а-яё])', re.I)
 
 def normalize_multipliers(text):
     def repl(m):
-        forms, feminine = _multipliers[m.group(2).lower()]
-        if ',' in m.group(1):
-            # decimal count takes the genitive singular: 2,7 млрд -> ... миллиарда
-            ip, fp = m.group(1).split(',', 1)
-            words = _decimal_to_words(ip, fp)
-            if words is None:
-                return m.group(0)
-            return words + ' ' + forms[1]
         n = int(m.group(1))
+        forms, feminine = _multipliers[m.group(2).lower()]
         words = number_to_words(n).split()
         if feminine:
             _feminine_last(words)
@@ -875,10 +635,10 @@ def normalize_percent(text):
         return f"{number_to_words(n)} {_plural(n, forms)}"
     return re.sub(r'(\d+(?:[.,]\d+)?)\s*%', repl, text)
 
-# ---- Units of measurement -----------------------------------------------------
+# ---- Units of measurement (data/measurements.tsv) ----------------------------
 def _load_measurements():
     units = {}
-    for line in _read_lines('measurements'):
+    for line in _read_lines('measurements.tsv'):
         parts = line.split('\t')
         if len(parts) == 5:
             ab, one, few, many, gender = parts
@@ -886,303 +646,47 @@ def _load_measurements():
     return units
 
 _measurements = _load_measurements()
-_UNIT_ALT = '|'.join(re.escape(u) for u in sorted(_measurements, key=len, reverse=True))
 # Case-sensitive, longest unit first, number required before the unit, and no
 # letter immediately after (so "м" does not fire inside "метр", "°" not in "°C").
 _re_measure = re.compile(
-    r'(?<![\d.,])(\d+(?:,\d+)?)\s*(' + _UNIT_ALT +
+    r'(?<![\d.,])(\d+)\s*(' +
+    '|'.join(re.escape(u) for u in sorted(_measurements, key=len, reverse=True)) +
     r')(?![A-Za-zА-Яа-яёЁ])') if _measurements else None
 
 def normalize_measurements(text):
     """Read a number followed by a unit, agreeing in count: 5 кг -> 'пять
-    килограммов', 2 кг -> 'два килограмма', 1,5 км -> '... километра'."""
+    килограммов', 2 кг -> 'два килограмма', 1 кг -> 'один килограмм'."""
     if not _re_measure:
         return text
     def repl(m):
-        one, few, many, gender = _measurements[m.group(2)]
-        if ',' in m.group(1):
-            # decimal count takes the genitive singular: 1,5 км -> ... километра
-            ip, fp = m.group(1).split(',', 1)
-            words = _decimal_to_words(ip, fp)
-            if words is None:
-                return m.group(0)
-            return words + ' ' + few
         n = int(m.group(1))
+        one, few, many, gender = _measurements[m.group(2)]
         words = number_to_words(n).split()
         if gender == 'f':
             _feminine_last(words)
         return ' '.join(words) + ' ' + _plural(n, (one, few, many))
     return _re_measure.sub(repl, text)
 
-# ---- Cardinal declension (closed-class morphology, table-driven) --------------
-_CASES = ('gen', 'dat', 'instr', 'prep')
-_CASE_FORMS = {
-    'ноль': ('нуля', 'нулю', 'нулём', 'нуле'),
-    'один': ('одного', 'одному', 'одним', 'одном'),
-    'одна': ('одной', 'одной', 'одной', 'одной'),
-    'два': ('двух', 'двум', 'двумя', 'двух'),
-    'две': ('двух', 'двум', 'двумя', 'двух'),
-    'три': ('трёх', 'трём', 'тремя', 'трёх'),
-    'четыре': ('четырёх', 'четырём', 'четырьмя', 'четырёх'),
-    'восемь': ('восьми', 'восьми', 'восьмью', 'восьми'),
-    'сорок': ('сорока',) * 4,
-    'девяносто': ('девяноста',) * 4,
-    'сто': ('ста',) * 4,
-    'пятьдесят': ('пятидесяти', 'пятидесяти', 'пятьюдесятью', 'пятидесяти'),
-    'шестьдесят': ('шестидесяти', 'шестидесяти', 'шестьюдесятью', 'шестидесяти'),
-    'семьдесят': ('семидесяти', 'семидесяти', 'семьюдесятью', 'семидесяти'),
-    'восемьдесят': ('восьмидесяти', 'восьмидесяти', 'восьмьюдесятью', 'восьмидесяти'),
-    'двести': ('двухсот', 'двумстам', 'двумястами', 'двухстах'),
-    'триста': ('трёхсот', 'трёмстам', 'тремястами', 'трёхстах'),
-    'четыреста': ('четырёхсот', 'четырёмстам', 'четырьмястами', 'четырёхстах'),
-    'пятьсот': ('пятисот', 'пятистам', 'пятьюстами', 'пятистах'),
-    'шестьсот': ('шестисот', 'шестистам', 'шестьюстами', 'шестистах'),
-    'семьсот': ('семисот', 'семистам', 'семьюстами', 'семистах'),
-    'восемьсот': ('восьмисот', 'восьмистам', 'восьмьюстами', 'восьмистах'),
-    'девятьсот': ('девятисот', 'девятистам', 'девятьюстами', 'девятистах'),
-    'тысяча': ('тысячи', 'тысяче', 'тысячей', 'тысяче'),
-    'тысячи': ('тысяч', 'тысячам', 'тысячами', 'тысячах'),
-    'тысяч': ('тысяч', 'тысячам', 'тысячами', 'тысячах'),
-}
-# Soft-sign numerals decline regularly: пять -> пяти / пятью (восемь is above).
-for _w in ('пять', 'шесть', 'семь', 'девять', 'десять', 'одиннадцать', 'двенадцать',
-           'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать',
-           'восемнадцать', 'девятнадцать', 'двадцать', 'тридцать'):
-    _CASE_FORMS[_w] = (_w[:-1] + 'и', _w[:-1] + 'и', _w[:-1] + 'ью', _w[:-1] + 'и')
-for _s in ('миллион', 'миллиард', 'триллион', 'квадриллион'):
-    _CASE_FORMS[_s] = (_s + 'а', _s + 'у', _s + 'ом', _s + 'е')
-    _CASE_FORMS[_s + 'а'] = _CASE_FORMS[_s + 'ов'] = (_s + 'ов', _s + 'ам', _s + 'ами', _s + 'ах')
-
-def number_to_words_case(n, case):
-    """Cardinal in an oblique case: 500/'gen' -> 'пятисот'."""
-    idx = _CASES.index(case)
-    return ' '.join(_CASE_FORMS.get(w, (w,) * 4)[idx] for w in number_to_words(n).split())
-
-# ---- Context-governed case (preposition / oblique noun ending) ----------------
-_prep_case = {
-    'около': 'gen', 'более': 'gen', 'менее': 'gen', 'свыше': 'gen', 'от': 'gen',
-    'до': 'gen', 'из': 'gen', 'без': 'gen', 'после': 'gen',
-    'к': 'dat', 'о': 'prep', 'об': 'prep',
-}
-# Longest alternative first; the trailing guard refuses decimals, times, ranges
-# and percentages, which keep their own rules.
-_re_prep_num = re.compile(
-    r'(?<![А-Яа-яёЁ-])(около|после|более|менее|свыше|без|от|до|из|об|к|о)'
-    r'\s+(\d+)(?:\s*(' + _UNIT_ALT + r'))?(?![\d.,:%–—-])(?![A-Za-zА-Яа-яёЁ])', re.I)
-# "с 500 рублями": instrumental signalled by the noun ending.
-_re_instr_num = re.compile(r'(?<![А-Яа-яёЁ])([Сс]о?)\s+(\d+)\s+([а-яё]{3,}(?:ами|ями))\b')
-# A number directly before an obliquely-inflected noun agrees with it.
-_re_num_oblique_noun = re.compile(r'\b(\d+)\s+([а-яё]{3,}(?:ами|ями|ах|ях))\b')
-_oblique_suffix_case = {'ами': 'instr', 'ями': 'instr', 'ах': 'prep', 'ях': 'prep'}
-
-def normalize_case_context(text):
-    """Inflect a number to the case its context dictates: 'около 500 км' ->
-    'около пятисот километров', 'к 5' -> 'к пяти', 'с 500 рублями' -> 'с пятьюстами рублями'."""
-    def prep(m):
-        case = _prep_case[m.group(1).lower()]
-        out = m.group(1) + ' ' + number_to_words_case(int(m.group(2)), case)
-        if m.group(3):
-            if case != 'gen':
-                return m.group(0)  # unit in dat/prep needs noun declension; leave it
-            out += ' ' + _measurements[m.group(3)][2]  # genitive plural == many form
-        return out
-
-    def instr(m):
-        return f"{m.group(1)} {number_to_words_case(int(m.group(2)), 'instr')} {m.group(3)}"
-
-    def oblique(m):
-        suffix = next(s for s in ('ами', 'ями', 'ах', 'ях') if m.group(2).endswith(s))
-        return f"{number_to_words_case(int(m.group(1)), _oblique_suffix_case[suffix])} {m.group(2)}"
-
-    text = _re_instr_num.sub(instr, text)
-    text = _re_prep_num.sub(prep, text)
-    return _re_num_oblique_noun.sub(oblique, text)
-
-# ---- Bare-number ordinals from a trigger noun ----------------------------------
-# A singular trigger noun right after a number signals an ordinal reading
-# ("2 место" is второе место; the cardinal would demand "места"/"мест").
-_ordinal_trigger = {
-    'место': 'nom_n', 'этаж': 'nom_m', 'класс': 'nom_m', 'век': 'nom_m',
-    'том': 'nom_m', 'курс': 'nom_m', 'раунд': 'nom_m', 'сезон': 'nom_m',
-    'этап': 'nom_m', 'тур': 'nom_m', 'разряд': 'nom_m', 'подъезд': 'nom_m',
-}
-_re_ordinal_trigger = re.compile(
-    r'\b(\d{1,4})\s+(' + '|'.join(_ordinal_trigger) + r')\b(?![а-яё])')
-
-def normalize_ordinal_triggers(text):
-    def repl(m):
-        return f"{number_to_ordinal_words(int(m.group(1)), _ordinal_trigger[m.group(2)])} {m.group(2)}"
-    return _re_ordinal_trigger.sub(repl, text)
-
-# ---- Compound number adjectives: 5-летний -> пятилетний ------------------------
-# The numeral joins the adjective as a genitive prefix (sole exceptions below).
-_compound_prefix_override = {'один': 'одно', 'одна': 'одно', 'девяносто': 'девяносто',
-                             'сто': 'сто', 'тысяча': 'тысяче'}
-_re_compound = re.compile(
-    r'\b(\d+)-([а-яё]{2,}(?:ий|ый|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими))\b')
-
-def normalize_compounds(text):
-    def repl(m):
-        words = number_to_words(int(m.group(1))).split()
-        prefix = ''.join(_compound_prefix_override.get(w, _CASE_FORMS.get(w, (w,))[0])
-                         for w in words)
-        return prefix + m.group(2)
-    return _re_compound.sub(repl, text)
-
-# ---- Numeric ranges ------------------------------------------------------------
-_re_year_range = re.compile(r'\b(\d{3,4})\s*[-–—]\s*(\d{3,4})\s*(?:гг\.?|годы)(?![а-яё])')
-_re_century_range = re.compile(r'\b([MDCLXVI]{1,6})\s*[-–—]\s*([MDCLXVI]{1,6})\s*вв\.?(?![а-яё])')
-_re_num_range = re.compile(r'(?<=\d)\s*[–—]\s*(?=\d)')  # en/em dash only: hyphen is phones/ISBN
-
-def normalize_ranges(text):
-    """Read ranges: '1941—1945 гг.' -> '... первый ... пятый годы', '5–10' -> '5 10'."""
-    def years(m):
-        return (f"{number_to_ordinal_words(int(m.group(1)), 'nom_m')} "
-                f"{number_to_ordinal_words(int(m.group(2)), 'nom_m')} годы")
-
-    def centuries(m):
-        if not (_re_roman_valid.match(m.group(1)) and _re_roman_valid.match(m.group(2))):
-            return m.group(0)
-        return (f"{number_to_ordinal_words(_roman_to_int(m.group(1)), 'nom_m')} "
-                f"{number_to_ordinal_words(_roman_to_int(m.group(2)), 'nom_m')} века")
-
-    text = _re_year_range.sub(years, text)
-    text = _re_century_range.sub(centuries, text)
-    return _re_num_range.sub(' ', text)
-
-# ---- Scores (after clock times have been consumed): 3:1 -> 'три один' -----------
-_re_score = re.compile(r'\b(\d{1,2}):(\d{1,2})\b')
-
-def normalize_scores(text):
-    return _re_score.sub(
-        lambda m: f"{number_to_words(int(m.group(1)))} {number_to_words(int(m.group(2)))}", text)
-
-# ---- Arithmetic: '+' between numbers (=, ×, ÷ live in the symbol map) ----------
-def normalize_math(text):
-    return re.sub(r'(?<=\d)\s*\+\s*(?=\d)', ' плюс ', text)
-
-# ---- Structural references before a number: ст. 158 -> статья 158 ---------------
-_section_abbr = {'ст': 'статья', 'пп': 'подпункт', 'п': 'пункт',
-                 'рис': 'рисунок', 'табл': 'таблица', 'гл': 'глава'}
-_re_section = re.compile(r'(?<![А-Яа-яёЁ])(ст|пп|табл|рис|гл|п)\.\s*(?=\d)', re.I)
-
-def normalize_sections(text):
-    return _re_section.sub(lambda m: _section_abbr[m.group(1).lower()] + ' ', text)
-
-# ---- Versions / IP addresses: dot-separated numbers read with 'точка' ----------
-_re_ip = re.compile(r'\b\d+(?:\.\d+){2,}\b')
-# A single dot reads as a version only after a Latin product name (Python 3.11);
-# bare N.N stays untouched (could be an English-style decimal).
-_re_version = re.compile(r'\b([A-Za-z][\w-]*\s+)(\d+(?:\.\d+)+)\b')
-
-def _read_dotted(num):
-    digit_words = ['ноль', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять']
-    def part(p):
-        if len(p) > 1 and p[0] == '0':
-            return ' '.join(digit_words[int(d)] for d in p)
-        return number_to_words(int(p))
-    return ' точка '.join(part(p) for p in num.split('.'))
-
-def normalize_versions(text):
-    text = _re_version.sub(lambda m: m.group(1) + _read_dotted(m.group(2)), text)
-    return _re_ip.sub(lambda m: _read_dotted(m.group(0)), text)
-
-# ---- English words and Latin acronyms ------------------------------------------
-def _load_english():
-    mapping = {}
-    for line in _read_lines('english'):
-        if '\t' in line:
-            key, value = line.split('\t', 1)
-            mapping[key.strip().lower()] = value.strip()
-    return mapping
-
-_english_words = _load_english()
-_re_latin_word = re.compile(r"\b[A-Za-z][A-Za-z'’-]*\b")
-
-# English letter names for spelled-out Latin acronyms (GPS -> джи пи эс).
-_latin_letter_names = {
-    'a': 'эй', 'b': 'би', 'c': 'си', 'd': 'ди', 'e': 'и', 'f': 'эф', 'g': 'джи',
-    'h': 'эйч', 'i': 'ай', 'j': 'джей', 'k': 'кей', 'l': 'эл', 'm': 'эм', 'n': 'эн',
-    'o': 'оу', 'p': 'пи', 'q': 'кью', 'r': 'ар', 's': 'эс', 't': 'ти', 'u': 'ю',
-    'v': 'ви', 'w': 'дабл ю', 'x': 'экс', 'y': 'уай', 'z': 'зед',
-}
-_re_latin_acronym = re.compile(r'\b[A-Z]{2,6}\b')
-
-def normalize_english(text):
-    """Dictionary words get their conventional rendering (Google -> гугл); all-caps
-    acronyms that are not pronounceable as a word (a vowel-less stretch of two or
-    more consonants) are spelled with English letter names (GPS -> джи пи эс).
-    Everything else falls through to transliteration."""
-    def word(m):
-        return _english_words.get(m.group(0).lower(), m.group(0))
-
-    def acronym(m):
-        low = m.group(0).lower()
-        if low in _english_words:
-            return m.group(0)  # dictionary handled / will handle it
-        if not set(low) & set('aeiou') or re.search(r'[^aeiou]{2}', low):
-            return ' '.join(_latin_letter_names[c] for c in low)
-        return m.group(0)
-
-    text = _re_latin_word.sub(word, text)
-    return _re_latin_acronym.sub(acronym, text)
-
-# ---- ё restoration (unambiguous е-spellings only) -------------------------------
-def _load_yo():
-    mapping = {}
-    for line in _read_lines('yo'):
-        if '\t' in line:
-            key, value = line.split('\t', 1)
-            mapping[key.strip().lower()] = value.strip()
-    return mapping
-
-_yo_map = _load_yo()
-_re_yo = re.compile(r'\b(' + '|'.join(sorted(_yo_map, key=len, reverse=True)) + r')\b',
-                    re.I) if _yo_map else None
-
-def restore_yo(text):
-    """Restore ё in words where the е-spelling is unambiguous: еще -> ещё."""
-    if not _re_yo:
-        return text
-    def repl(m):
-        rep = _yo_map.get(m.group(0).lower())
-        if rep is None:
-            return m.group(0)
-        if m.group(0)[0].isupper():
-            rep = rep[0].upper() + rep[1:]
-        return rep
-    return _re_yo.sub(repl, text)
-
 def normalize_russian(text):
     text = normalize_typography(text)
     text = normalize_web(text)
     text = normalize_abbreviations(text)
-    text = normalize_sections(text)
     text = normalize_number_groups(text)
-    text = normalize_ranges(text)
     text = normalize_dates(text)
-    text = normalize_case_context(text)
-    text = normalize_ordinal_triggers(text)
-    text = normalize_compounds(text)
     text = normalize_ordinals(text)
     text = normalize_time(text)
-    text = normalize_scores(text)         # leftover N:M after clock times
     text = normalize_fractions(text)
     text = normalize_percent(text)
     text = normalize_multipliers(text)
     text = normalize_measurements(text)   # before acronym speller (ГБ/МБ are units, not letters)
     text = expand_abbreviations(text)
     text = normalize_symbols(text)
-    text = normalize_math(text)
     text = normalize_decimals(text)
     text = currency_normalization(text)
     text = normalize_text_with_phone_numbers(text)
-    text = normalize_versions(text)       # after dates and currency claim their dots
     text = normalize_negatives(text)
     text = normalize_text_with_numbers(text)
-    text = normalize_english(text)
     text = cyrrilize(text)
-    text = restore_yo(text)
     text = re.sub(r' {2,}', ' ', text).strip()
     # ё is kept intentionally (it carries pronunciation for TTS); the reference
     # data drops it, so evaluation should compare ё/е-insensitively.
