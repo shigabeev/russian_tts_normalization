@@ -115,6 +115,9 @@ CASES = [
     ("USB", "ю эс би"),
     # Currency form must not fire inside a longer word.
     ("6 руб.", "шесть рублей."),
+    # Feminine currency units count in the feminine.
+    ("543.21 RUB", "пятьсот сорок три рубля двадцать одна копейка"),
+    ("541 UAH", "пятьсот сорок одна гривна"),
 ]
 
 

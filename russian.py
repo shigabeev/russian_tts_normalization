@@ -492,28 +492,35 @@ def currency_normalization(text):
     # Function to convert a currency amount into its word components in Russian
     def currency_to_words(amount, currency='rub'):
         # Define the currency units and subunits
+        # (forms, feminine): копейка and гривна count in the feminine (одна копейка).
         currencies = {
-            'rub': (['рубль', 'рубля', 'рублей'], ['копейка', 'копейки', 'копеек']),
-            'usd': (['доллар', 'доллара', 'долларов'], ['цент', 'цента', 'центов']),
-            'eur': (['евро', 'евро', 'евро'], ['евроцент', 'евроцента', 'евроцентов']),  # Euro has invariable form
-            'gbp': (['фунт', 'фунта', 'фунтов'], ['пенс', 'пенса', 'пенсов']),
-            'uah': (['гривна', 'гривны', 'гривен'], ['копейка', 'копейки', 'копеек']),
+            'rub': ((['рубль', 'рубля', 'рублей'], False), (['копейка', 'копейки', 'копеек'], True)),
+            'usd': ((['доллар', 'доллара', 'долларов'], False), (['цент', 'цента', 'центов'], False)),
+            'eur': ((['евро', 'евро', 'евро'], False), (['евроцент', 'евроцента', 'евроцентов'], False)),  # Euro has invariable form
+            'gbp': ((['фунт', 'фунта', 'фунтов'], False), (['пенс', 'пенса', 'пенсов'], False)),
+            'uah': ((['гривна', 'гривны', 'гривен'], True), (['копейка', 'копейки', 'копеек'], True)),
         }
 
         # Get the correct currency units
-        main_units, sub_units = currencies.get(currency, currencies['rub'])
+        (main_units, main_fem), (sub_units, sub_fem) = currencies.get(currency, currencies['rub'])
 
         # Separate the amount into main and subunits
         main_amount = int(amount)
         sub_amount = int(round((amount - main_amount) * 100))
 
         # Convert numbers to words
-        main_words = number_to_words(main_amount) + ' ' + russian_plural(main_amount, main_units)
+        def count_words(n, feminine):
+            words = number_to_words(n).split()
+            if feminine:
+                _feminine_last(words)
+            return ' '.join(words)
+
+        main_words = count_words(main_amount, main_fem) + ' ' + russian_plural(main_amount, main_units)
         sub_words = ''
 
         # Add subunits if present
         if sub_amount > 0:
-            sub_words = number_to_words(sub_amount) + ' ' + russian_plural(sub_amount, sub_units)
+            sub_words = count_words(sub_amount, sub_fem) + ' ' + russian_plural(sub_amount, sub_units)
 
         # Combine main and subunit words
         full_currency_words = main_words.strip()
