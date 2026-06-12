@@ -1,0 +1,7 @@
+__pycache__/
+*.zip
+*.csv
+text-normalization-challenge-russian-language/
+.DS_Store
+dist/
+*.egg-info/
