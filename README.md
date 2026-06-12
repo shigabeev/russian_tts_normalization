@@ -7,6 +7,12 @@ Install: `pip install russian-tts-normalization`, or just copy `russian.py`
 TTS system. It can also be used as a command-line filter:
 `echo "цена 1 500 руб." | python3 russian.py`.
 
+Note the name difference: the PyPI *package* is `russian-tts-normalization`,
+but it installs a single top-level *module* named `russian` — the import name
+matches the file, because the file is designed to also be vendored as
+`russian.py` next to your TTS code (in which case the import becomes
+`from text.russian import normalize_russian` or similar).
+
 ```
 from russian import normalize_russian
 
