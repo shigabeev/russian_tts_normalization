@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "russian-tts-normalization"
-version = "1.0.0"
+version = "1.0.1"
 description = "Russian text normalization for TTS: numbers, dates, currency, units, case agreement - one file, regex only, no dependencies"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/frappuccino/russian_tts_normalization"
+Homepage = "https://github.com/shigabeev/russian_tts_normalization"
 
 [tool.setuptools]
 py-modules = ["russian"]
