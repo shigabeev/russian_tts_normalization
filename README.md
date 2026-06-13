@@ -2,19 +2,17 @@
 Normalize Text in Russian.
 
 
-Install: `pip install russian-tts-normalization`, or just copy `russian.py`
+Install: `pip install rutextnorm`, or just copy `rutextnorm.py`
 (a single self-contained file, no dependencies) into the `text` folder of your
 TTS system. It can also be used as a command-line filter:
-`echo "цена 1 500 руб." | python3 russian.py`.
+`echo "цена 1 500 руб." | python3 rutextnorm.py`.
 
-Note the name difference: the PyPI *package* is `russian-tts-normalization`,
-but it installs a single top-level *module* named `russian` — the import name
-matches the file, because the file is designed to also be vendored as
-`russian.py` next to your TTS code (in which case the import becomes
-`from text.russian import normalize_russian` or similar).
+The package and the import name are the same (`rutextnorm`). When vendored as a
+plain file the import follows wherever you put it (e.g.
+`from text.rutextnorm import normalize_russian`).
 
 ```
-from russian import normalize_russian
+from rutextnorm import normalize_russian
 
 complex_test_text = """У меня есть $1234 и 5678 рублей. Кроме того, я должен 90.50€ и взял в долг 4321 GBP.
 В моем кошельке было 876 UAH и 543.21 RUB, а также я нашел 20 центов."""
@@ -63,7 +61,7 @@ Prints:
 
 Notes:
 - The letter ё is kept in the output (it carries pronunciation for TTS).
-- Vocabularies are embedded in `russian.py` (single-file module). Abbreviations come from NVIDIA NeMo-text-processing
+- Vocabularies are embedded in `rutextnorm.py` (single-file module). Abbreviations come from NVIDIA NeMo-text-processing
   (`ru/whitelist.tsv`, Apache-2.0); only single-sense entries are used.
 
 # Validation
