@@ -2,11 +2,14 @@
 
 All notable changes to `rutextnorm`. This project follows [Semantic Versioning](https://semver.org).
 
-## [1.2.0] — 2026-06-13
+## [2.1.0] — 2026-06-13
 
-No API changes; `normalize_russian` and `flag_uncertain` keep their signatures.
-Measured against the `ru_2026.csv` gold (artifact-free Kaggle set), the trusted
-(non-escalated) accuracy rose to 98.2% while the escalation rate fell to 9.1%.
+Version jumps to 2.x to stay above the legacy `2.0` GitHub tag (which carried older,
+pre-`flag_uncertain` code): version numbers only ever increase, so the newest code
+always has the highest number. No API changes; `normalize_russian` and
+`flag_uncertain` keep their signatures. Measured against the `ru_2026.csv` gold
+(artifact-free Kaggle set), the trusted (non-escalated) accuracy rose to 98.2% while
+the escalation rate fell to 9.1%.
 
 ### Normalization
 - **Fractions**: a numerator ending in 1 now takes the singular denominator
@@ -43,6 +46,6 @@ Measured against the `ru_2026.csv` gold (artifact-free Kaggle set), the trusted
   currency, units, ordinals, decimals, fractions, times, abbreviations, acronyms,
   symbols, and Latin/Cyrillic handling for Russian TTS.
 
-[1.2.0]: https://github.com/shigabeev/russian_tts_normalization/releases/tag/v1.2.0
+[2.1.0]: https://github.com/shigabeev/russian_tts_normalization/releases/tag/v2.1.0
 [1.1.0]: https://pypi.org/project/rutextnorm/1.1.0/
 [1.0.0]: https://pypi.org/project/rutextnorm/1.0.0/
