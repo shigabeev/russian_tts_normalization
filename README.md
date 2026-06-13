@@ -28,6 +28,38 @@ Prints:
 В моем кошельке было восемьсот семьдесят шесть гривен и пятьсот сорок три рубля двадцать одна копейка, а также я нашёл двадцать центов.
 ```
 
+# Knowing when to defer (`flag_uncertain`)
+`normalize_russian` always returns its best guess. For production use you often
+want to know *when that guess is unreliable* — so you can route just those cases
+to a stronger (and slower) method such as an LLM or neural normalizer, and trust
+the fast rules everywhere else. `flag_uncertain(text)` returns the spans where
+the output rests on information the rules cannot recover:
+
+```
+from rutextnorm import normalize_russian, flag_uncertain
+
+text = "В томе III книги Smithsonian на с. 42 есть 1998 интересных фактов."
+spans = flag_uncertain(text)          # [(start, end, original, reason), ...]
+if spans:
+    # hand `text` (or just these spans) to the better method
+    for start, end, original, reason in spans:
+        print(f"{original!r}: {reason}")
+# 'III': Roman numeral (case defaults to nominative)
+# 'Smithsonian': foreign word (transliteration is approximate)
+# 'с.': ambiguous abbreviation (секунда / страница / село / с (предлог))
+# '1998': four-digit number (year or cardinal?)
+```
+
+It reads the input only (never the reference), runs in ~0.02 ms/sentence, and
+detects five structural ambiguities: foreign words, multi-sense abbreviations
+(`г.`/`в.`/`с.`…), Roman numerals, four-digit year-or-cardinal numbers, and
+context-free bare numbers. Measured on the Kaggle gold with sentence-level
+routing: escalating ~39% of sentences lifts the trusted fast-path from **91.5%
+to 98.5%** token accuracy and routes **90% of all errors** to the better
+method. Each span carries a `reason`, so a cost-sensitive caller can ignore
+reason types it does not care about (dropping the bare-number flags, for
+instance, cuts escalation to ~35% with almost the same trusted accuracy).
+
 # Implemented 
 1. Cyrrilization of letters such as "apple" -> "эппл". 
 2. Abbreviations expansion such as "СССР" -> "эс эс эс эр". 

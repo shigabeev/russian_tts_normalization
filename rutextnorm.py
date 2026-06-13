@@ -1160,6 +1160,86 @@ def restore_yo(text):
         return rep
     return _re_yo.sub(repl, text)
 
+# ---- Uncertainty detection (router / abstention) ------------------------------
+# normalize_russian() always returns its best guess. flag_uncertain() returns the
+# spans where that guess rests on information the rules cannot recover — so a
+# caller can route just those spans (or the sentences holding them) to a stronger
+# method (LLM / neural normaliser) and trust the rest. Detectors read the INPUT
+# only; they never consult the gold. Each is a structural ambiguity: a reading
+# that needs a cue which is absent from the text.
+
+# Abbreviations with several common expansions that context (not rules) must pick.
+_MULTISENSE_ABBR = {
+    'г': 'год / город / грамм / господин', 'в': 'век / восток / в (предлог)',
+    'кв': 'квартира / квартал / квадратный', 'т': 'том / тонна / так',
+    'с': 'секунда / страница / село / с (предлог)', 'д': 'дом / деревня / дочь',
+    'к': 'комната / корпус / к (предлог)', 'об': 'оборот / область / об (предлог)',
+}
+_re_uncertain_abbr = re.compile(
+    r'(?<![А-Яа-яёЁ])(' + '|'.join(sorted(_MULTISENSE_ABBR, key=len, reverse=True)) +
+    r')\.(?![а-яё])', re.I)
+_re_uncertain_latin = re.compile(r"\b[A-Za-z][A-Za-z'’-]*\b")
+_re_uncertain_roman = re.compile(r'\b[MDCLXVI]{2,}\b')
+_re_uncertain_year = re.compile(r'(?<![\d.,])(\d{4})(?![\d.,])')
+# A bare integer with no surrounding cue (preposition, unit, ordinal suffix,
+# year/trigger noun) — its grammatical case and cardinal/ordinal status are
+# genuinely undetermined; the rules default to a nominative cardinal.
+_GOVERNORS = set(_prep_case) | {'в', 'на', 'за', 'по', 'с', 'со', 'у', 'из'}
+_re_uncertain_int = re.compile(r'(?<![\d.,:%-])(\d{1,4})(?![\d.,:%/-])')
+_CARDINAL_CUE_AFTER = re.compile(r'^\s*(?:' + _UNIT_ALT + r'|%|руб|коп|год|тыс|млн|млрд|'
+                                 r'человек|раз|[-–—])', re.I)
+
+def flag_uncertain(text):
+    """Return a list of (start, end, original, reason) spans where the
+    normalisation is a guess the rules cannot verify. Empty list == high
+    confidence in the whole string. Offsets index the input `text`."""
+    spans = []
+    seen = set()
+    def add(s, e, why):
+        if (s, e) not in seen:
+            seen.add((s, e))
+            spans.append((s, e, text[s:e], why))
+
+    for m in _re_uncertain_abbr.finditer(text):
+        add(m.start(), m.end(), 'ambiguous abbreviation (' +
+            _MULTISENSE_ABBR[m.group(1).lower()] + ')')
+    for m in _re_uncertain_latin.finditer(text):
+        w = m.group(0)
+        if re.fullmatch(r'[A-Z]{2,6}', w) or w.lower() in _english_words:
+            continue  # handled: letter-name acronym or dictionary word
+        add(m.start(), m.end(), 'foreign word (transliteration is approximate)')
+    for m in _re_uncertain_roman.finditer(text):
+        w = m.group(0)
+        if w not in _roman_stoplist and _re_roman_valid.match(w):
+            add(m.start(), m.end(), 'Roman numeral (case defaults to nominative)')
+    for m in _re_uncertain_year.finditer(text):
+        if not 1000 <= int(m.group(1)) <= 2099:
+            continue
+        after = text[m.end():m.end() + 8]
+        if re.match(r'\s*(?:год|года|году|годе|г\.|гг\.|г\b|вв?\.)', after):
+            continue  # год-context resolves year reading
+        add(m.start(), m.end(), 'four-digit number (year or cardinal?)')
+
+    # Bare integers with no resolving cue on either side.
+    words_before_end = {m.end(): m.group(0).lower()
+                        for m in re.finditer(r'[А-Яа-яёЁA-Za-z]+', text)}
+    for m in _re_uncertain_int.finditer(text):
+        s, e = m.start(), m.end()
+        if (s, e) in seen:
+            continue  # already flagged as a year
+        if len(m.group(1)) > 1 and m.group(1)[0] == '0':
+            continue  # leading zero -> confident digit string
+        left = text[:s].rstrip()
+        prev = re.search(r'[А-Яа-яёЁ]+$', left)
+        if prev and prev.group(0).lower() in _GOVERNORS:
+            continue  # governed by a preposition -> case resolved
+        if _CARDINAL_CUE_AFTER.match(text[e:]):
+            continue  # unit / currency / year / range follows -> handled
+        add(s, e, 'bare number (case / cardinal-vs-ordinal undetermined)')
+
+    spans.sort()
+    return spans
+
 def normalize_russian(text):
     text = normalize_typography(text)
     text = normalize_web(text)
