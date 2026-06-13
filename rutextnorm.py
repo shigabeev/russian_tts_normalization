@@ -29,6 +29,10 @@ _ABBREVIATIONS_TSV = """\
 и др.	и другие
 и пр.	и прочие
 т.е.	то есть
+# Currency abbreviations left over after a multiplier word ("млрд руб." -> рублей).
+# Single-sense; for a bare "N руб." the currency reader still fixes the count form.
+руб.	рублей
+долл.	долларов
 """
 
 _MEASUREMENTS_TSV = """\
@@ -704,9 +708,13 @@ def _decimal_to_words(int_part, frac_part):
     return f"{' '.join(int_words)} {whole} и {' '.join(frac_words)} {place}"
 
 def normalize_decimals(text):
-    """Read decimal-comma numbers: 1,2 -> 'одна целая и две десятых'."""
+    """Read decimal-comma numbers: 1,2 -> 'одна целая и две десятых'. An all-zero
+    fraction is dropped (938,00 -> 'девятьсот тридцать восемь')."""
     def repl(m):
-        return _decimal_to_words(m.group(1), m.group(2)) or m.group(0)
+        ip, fp = m.group(1), m.group(2)
+        if set(fp) == {'0'}:
+            return number_to_words(int(ip))
+        return _decimal_to_words(ip, fp) or m.group(0)
     return re.sub(r'\b(\d+),(\d+)\b', repl, text)
 
 # Russian ordinal suffix (after a hyphen) -> grammatical form, e.g. "1-й" / "190-го" / "1950-х".
@@ -760,6 +768,8 @@ _re_time_hms = re.compile(r'(?<![\d:])(\d{1,2}):([0-5]\d):([0-5]\d)(?![\d:])')
 _re_time_ampm = re.compile(r'\b(\d{1,2})\s*([APap])\.?\s*[Mm]\.?(?![A-Za-zа-яё])')
 
 def _hours_words(h):
+    if h == 1:
+        return 'час'  # one o'clock drops "один": 1:15 -> "час пятнадцать минут"
     return f"{number_to_words(h)} {_plural(h, ('час', 'часа', 'часов'))}"
 
 def _minutes_words(mn, forms=('минута', 'минуты', 'минут')):
@@ -794,17 +804,34 @@ def normalize_time(text):
     text = _re_time_ampm.sub(ampm, text)
     return _re_time.sub(repl, text)
 
-# Simple fractions a/b -> numerator (feminine) + denominator as a genitive-plural ordinal.
+# Simple fractions a/b -> numerator (feminine) + denominator as an ordinal.
 _re_fraction = re.compile(r'\b(\d+)/(\d+)\b')
+# Unicode vulgar fractions -> (numerator, denominator).
+_VULGAR_FRACTIONS = {
+    '½': (1, 2), '⅓': (1, 3), '⅔': (2, 3), '¼': (1, 4), '¾': (3, 4),
+    '⅕': (1, 5), '⅖': (2, 5), '⅗': (3, 5), '⅘': (4, 5), '⅙': (1, 6),
+    '⅚': (5, 6), '⅐': (1, 7), '⅛': (1, 8), '⅜': (3, 8), '⅝': (5, 8),
+    '⅞': (7, 8), '⅑': (1, 9), '⅒': (1, 10),
+}
+_re_vulgar = re.compile('[' + ''.join(_VULGAR_FRACTIONS) + ']')
+
+def _say_fraction(num, den):
+    """Numerator (feminine) + denominator ordinal agreeing in number: a numerator
+    ending in 1 takes the singular (1/2 -> 'одна вторая'), otherwise the
+    genitive plural (2/3 -> 'две третьих')."""
+    numer = ' '.join(_feminine_last(number_to_words(num).split()))
+    singular = num % 10 == 1 and num % 100 != 11
+    return f"{numer} {number_to_ordinal_words(den, 'nom_f' if singular else 'pl')}"
 
 def normalize_fractions(text):
-    """Read 'a/b' as 'two thirds': 2/3 -> 'две третьих', 653/26 -> '... двадцать шестых'."""
+    """Read 'a/b' and Unicode fractions: 2/3 -> 'две третьих', 1/2 -> 'одна вторая',
+    ½ -> 'одна вторая'."""
+    text = _re_vulgar.sub(lambda m: _say_fraction(*_VULGAR_FRACTIONS[m.group(0)]), text)
     def repl(m):
         num, den = int(m.group(1)), int(m.group(2))
         if den >= 10**12:
             return m.group(0)
-        numer = ' '.join(_feminine_last(number_to_words(num).split()))
-        return f"{numer} {number_to_ordinal_words(den, 'pl')}"
+        return _say_fraction(num, den)
     return _re_fraction.sub(repl, text)
 
 # ---- Modern / web text cleanup -----------------------------------------------
@@ -852,6 +879,22 @@ _multipliers = {
 }
 _re_multiplier = re.compile(r'\b(\d+(?:,\d+)?)\s*(тыс|млн|млрд|трлн)\.?(?![а-яё])', re.I)
 
+# A currency symbol on a multiplied amount ($1 млрд, 3 млн $) reads as a trailing
+# genitive-plural currency word — the form a count always takes after a multiplier.
+# Done before the multiplier/number passes so the amount expands normally.
+_CCY_SYMBOL_GENPL = {'$': 'долларов', '€': 'евро', '£': 'фунтов', '₽': 'рублей', '₴': 'гривен'}
+_MULT_TOKEN = r'(?:тыс|млн|млрд|трлн|миллион\w*|миллиард\w*|триллион\w*|тысяч\w*)\.?'
+_re_sym_amount = re.compile(r'([$€£₽₴])\s*(\d+(?:[.,]\d+)?)\s*(' + _MULT_TOKEN + r')')
+_re_amount_sym = re.compile(r'(\d+(?:[.,]\d+)?)\s*(' + _MULT_TOKEN + r')\s*([$€£₽₴])')
+
+def normalize_symbol_currency(text):
+    """$10 миллионов -> 'десять миллионов долларов', $1 млрд -> 'один миллиард долларов'."""
+    text = _re_sym_amount.sub(
+        lambda m: f"{m.group(2)} {m.group(3)} {_CCY_SYMBOL_GENPL[m.group(1)]}", text)
+    text = _re_amount_sym.sub(
+        lambda m: f"{m.group(1)} {m.group(2)} {_CCY_SYMBOL_GENPL[m.group(3)]}", text)
+    return text
+
 def normalize_multipliers(text):
     def repl(m):
         forms, feminine = _multipliers[m.group(2).lower()]
@@ -898,7 +941,7 @@ _UNIT_ALT = '|'.join(re.escape(u) for u in sorted(_measurements, key=len, revers
 # letter immediately after (so "м" does not fire inside "метр", "°" not in "°C").
 _re_measure = re.compile(
     r'(?<![\d.,])(\d+(?:,\d+)?)\s*(' + _UNIT_ALT +
-    r')(?![A-Za-zА-Яа-яёЁ])') if _measurements else None
+    r')\.?(?![A-Za-zА-Яа-яёЁ])') if _measurements else None
 
 def normalize_measurements(text):
     """Read a number followed by a unit, agreeing in count: 5 кг -> 'пять
@@ -1184,7 +1227,7 @@ _re_uncertain_year = re.compile(r'(?<![\d.,])(\d{4})(?![\d.,])')
 # A bare integer with no surrounding cue (preposition, unit, ordinal suffix,
 # year/trigger noun) — its grammatical case and cardinal/ordinal status are
 # genuinely undetermined; the rules default to a nominative cardinal.
-_GOVERNORS = set(_prep_case) | {'в', 'на', 'за', 'по', 'с', 'со', 'у', 'из'}
+_GOVERNORS = set(_prep_case) | {'с', 'со'}
 _re_uncertain_int = re.compile(r'(?<![\d.,:%-])(\d{1,4})(?![\d.,:%/-])')
 _CARDINAL_CUE_AFTER = re.compile(r'^\s*(?:' + _UNIT_ALT + r'|%|руб|коп|год|тыс|млн|млрд|'
                                  r'человек|раз|[-–—])', re.I)
@@ -1201,6 +1244,9 @@ def flag_uncertain(text):
             spans.append((s, e, text[s:e], why))
 
     for m in _re_uncertain_abbr.finditer(text):
+        left = text[:m.start()].rstrip()
+        if left and left[-1].isdigit():
+            continue  # a number governs it (82 т. -> тонны): the unit rules commit
         add(m.start(), m.end(), 'ambiguous abbreviation (' +
             _MULTISENSE_ABBR[m.group(1).lower()] + ')')
     for m in _re_uncertain_latin.finditer(text):
@@ -1256,6 +1302,7 @@ def normalize_russian(text):
     text = normalize_scores(text)         # leftover N:M after clock times
     text = normalize_fractions(text)
     text = normalize_percent(text)
+    text = normalize_symbol_currency(text)  # $1 млрд -> "1 млрд долларов" before multipliers expand
     text = normalize_multipliers(text)
     text = normalize_measurements(text)   # before acronym speller (ГБ/МБ are units, not letters)
     text = expand_abbreviations(text)
