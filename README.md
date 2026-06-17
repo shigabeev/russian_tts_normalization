@@ -16,7 +16,8 @@ spelled out, in agreement, in words.
 ```
 
 - **One file, zero dependencies, no network, no ML.** Pure `re` + lookup tables.
-  Deterministic: same input → same output. ~0.17 ms/sentence (~375k chars/s).
+  Deterministic: same input → same output. **~0.15 ms/sentence, ~370 k chars/s**
+  (`flag_uncertain` alone: ~0.02 ms).
 - **Knows when it might be wrong.** `flag_uncertain()` returns the spans the rules
   can't resolve from the text, so you can route just those to a slower, stronger
   method (a neural normalizer or LLM) and trust the fast path everywhere else.
@@ -197,6 +198,18 @@ accuracy on the **non-escalated** part — the number a hybrid pipeline actually
 marks lifts the trusted accuracy from 93.7% to **98.2%**, catching ~75% of all
 errors. Measured per *sentence* (the router's real setting, with full context)
 the figures are 93.8% / **97.9%** trusted at 8.5% escalation.
+
+### Performance
+
+Measured on a single core (Python 3, M-series Mac), 10 000 iterations per sentence:
+
+| | Latency | Throughput |
+|---|---|---|
+| `normalize_russian` | ~0.15 ms / sentence | ~370 k chars/s |
+| `flag_uncertain` | ~0.02 ms / sentence | ~8× faster than full normalize |
+
+Throughput is flat with sentence length (linear regex scan, no per-sentence setup).
+A typical TTS batch of 1 000 sentences normalizes in ~150 ms on one core.
 
 The remaining error is dominated by two things rules can't fix without a token
 classifier or sentence context — **grammatical case of bare numbers** and a few
